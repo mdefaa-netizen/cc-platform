@@ -98,13 +98,9 @@ with tab_summary:
     if not facs:
         st.info("No facilitators found. Add facilitators to begin tracking payments.")
     else:
-        # Summary table header
-        hcols = st.columns([3, 2, 2, 2, 2, 2])
-        headers = ["Facilitator", "Stipend", "Mileage", "Total Owed", "Status", "Miles"]
-        for hc, htxt in zip(hcols, headers):
-            hc.markdown(f"**{htxt}**")
-        st.markdown("<hr style='margin:4px 0 8px 0'>", unsafe_allow_html=True)
+        import pandas as pd
 
+        rows = []
         grand_stipend  = 0.0
         grand_mileage  = 0.0
         grand_total    = 0.0
@@ -112,9 +108,7 @@ with tab_summary:
         for f in facs:
             fid        = f["facilitator_id"]
             stipend    = f.get("payment_amount", 0) or 0
-            mil_data   = mileage_by_fac.get(fid, {"amount": 0.0, "miles": 0.0, "count": 0})
-            mil_amt    = mil_data["amount"]
-            miles      = mil_data["miles"]
+            mil_amt    = mileage_by_fac.get(fid, {"amount": 0.0})["amount"]
             total_owed = stipend + mil_amt
             status     = f.get("payment_status", "Pending")
             badge      = STATUS_ICONS.get(status, "⚪")
@@ -123,23 +117,35 @@ with tab_summary:
             grand_mileage += mil_amt
             grand_total   += total_owed
 
-            rcols = st.columns([3, 2, 2, 2, 2, 2])
-            rcols[0].markdown(f"🎤 **{f['name']}**")
-            rcols[1].markdown(f"${stipend:,.2f}")
-            rcols[2].markdown(f"${mil_amt:,.2f}" if mil_amt > 0 else "—")
-            rcols[3].markdown(f"**${total_owed:,.2f}**")
-            rcols[4].markdown(f"{badge} {status}")
-            rcols[5].markdown(f"{miles:.1f} mi" if miles > 0 else "—")
+            rows.append({
+                "Facilitator Name":      f["name"],
+                "Stipend":               f"${stipend:,.2f}",
+                "Mileage Reimbursement": f"${mil_amt:,.2f}",
+                "Total to Pay":          f"${total_owed:,.2f}",
+                "Payment Status":        f"{badge} {status}",
+            })
 
-        # Grand total row
-        st.markdown("<hr style='margin:8px 0 4px 0'>", unsafe_allow_html=True)
-        tcols = st.columns([3, 2, 2, 2, 2, 2])
-        tcols[0].markdown("**TOTALS**")
-        tcols[1].markdown(f"**${grand_stipend:,.2f}**")
-        tcols[2].markdown(f"**${grand_mileage:,.2f}**")
-        tcols[3].markdown(f"**${grand_total:,.2f}**")
-        tcols[4].markdown("")
-        tcols[5].markdown("")
+        # Totals row
+        rows.append({
+            "Facilitator Name":      "TOTALS",
+            "Stipend":               f"${grand_stipend:,.2f}",
+            "Mileage Reimbursement": f"${grand_mileage:,.2f}",
+            "Total to Pay":          f"${grand_total:,.2f}",
+            "Payment Status":        "",
+        })
+
+        df = pd.DataFrame(rows)
+
+        # Bold the totals row
+        def _bold_last_row(row):
+            is_last = row.name == len(df) - 1
+            return ["font-weight: bold" if is_last else "" for _ in row]
+
+        st.dataframe(
+            df.style.apply(_bold_last_row, axis=1),
+            use_container_width=True,
+            hide_index=True,
+        )
 
         st.markdown("<br>", unsafe_allow_html=True)
 
