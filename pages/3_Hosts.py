@@ -1,4 +1,5 @@
 import streamlit as st
+import time
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -89,9 +90,11 @@ with tab_add:
                                "state":state,"zip_code":zipcode,"contact_person":contact,
                                "email":email,"phone":phone,"check_payable_to":payable,
                                "payment_amount":amount,"payment_status":pstatus,"notes":notes})
+                    log_activity("Host Added", f"{name} — {venue}, {city}")
+                    add_notification(f"New host added: {name}", "all")
                     st.success(f"✅ Host '{name}' added!")
-                log_activity("Host Added", f"{name} — {venue}, {city}")
-                add_notification(f"New host added: {name}", "all")
+                    time.sleep(3)
+                    st.rerun()
 
 with tab_edit:
     hosts2 = get_all_hosts()
@@ -139,12 +142,15 @@ with tab_edit:
                                    "email":email,"phone":phone,"check_payable_to":payable,
                                    "payment_amount":amount,"payment_status":pstatus,
                                    "payment_date":str(pdate) if pdate else None,"notes":notes})
-                st.success("✅ Host updated!")
                 log_activity("Host Updated", f"{name} — payment status: {pstatus}")
                 st.session_state.pop("edit_host_id", None)
+                st.success("✅ Host updated!")
+                time.sleep(3)
+                st.rerun()
             if delb:
                 delete_host(sel)
                 st.success("🗑️ Host deleted.")
+                time.sleep(3)
                 st.rerun()
 
         # Host's events
