@@ -60,6 +60,8 @@ with tab_list:
                     st.info("Switch to Edit Host tab.")
 
 with tab_add:
+    if st.session_state.get("host_just_added"):
+        st.session_state.pop("host_just_added")
     st.markdown("### Add New Host")
     with st.form("add_host_form"):
         c1, c2 = st.columns(2)
@@ -79,13 +81,16 @@ with tab_add:
             pstatus = st.selectbox("Payment Status", ["Pending","Approved","Paid"])
         notes = st.text_area("Notes", height=80)
         if st.form_submit_button("💾 Save Host", use_container_width=True):
-            if not name:
+            if st.session_state.get("host_just_added"):
+                pass
+            elif not name:
                 st.error("Host name is required.")
             else:
                 existing = [h for h in get_all_hosts() if h["name"].lower()==name.lower()]
                 if existing:
                     st.error(f"A host named '{name}' already exists. Use Edit Host to update it.")
                 else:
+                    st.session_state["host_just_added"] = True
                     add_host({"name":name,"venue_name":venue,"address":address,"city":city,
                                "state":state,"zip_code":zipcode,"contact_person":contact,
                                "email":email,"phone":phone,"check_payable_to":payable,
