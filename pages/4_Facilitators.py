@@ -72,6 +72,8 @@ with tab_list:
                     st.info("Switch to Edit Facilitator tab.")
 
 with tab_add:
+    if st.session_state.get("facilitator_just_added"):
+        st.session_state.pop("facilitator_just_added")
     st.markdown("### Add New Facilitator")
     with st.form("add_fac_form"):
         c1, c2 = st.columns(2)
@@ -94,13 +96,16 @@ with tab_add:
             pstatus = st.selectbox("Payment Status", ["Pending","Approved","Paid"])
         notes = st.text_area("Notes", height=80)
         if st.form_submit_button("💾 Save Facilitator", use_container_width=True):
-            if not name:
+            if st.session_state.get("facilitator_just_added"):
+                pass
+            elif not name:
                 st.error("Name is required.")
             else:
                 existing = [f for f in get_all_facilitators() if f["name"].lower()==name.lower()]
                 if existing:
                     st.error(f"A facilitator named '{name}' already exists. Use Edit to update.")
                 else:
+                    st.session_state["facilitator_just_added"] = True
                     add_facilitator({"name":name,"email":email,"phone":phone,
                                       "address":address,"city":city,"state":state,"zip_code":zip_code,
                                       "specialization":spec,
