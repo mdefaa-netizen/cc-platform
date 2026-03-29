@@ -27,6 +27,8 @@ feedback = get_all_feedback()
 tab_add, tab_view, tab_summary = st.tabs(["➕ Add Feedback", "📋 All Feedback", "📊 Summary"])
 
 with tab_add:
+    if st.session_state.get("feedback_just_added"):
+        st.session_state.pop("feedback_just_added")
     st.markdown("### Record Participant Feedback")
     ev_opts = {e["event_id"]: f"{e['event_name']} ({e['event_date']})" for e in events}
     with st.form("add_feedback_form"):
@@ -38,9 +40,12 @@ with tab_add:
         text = st.text_area("Feedback *", placeholder="Enter participant feedback here...", height=140)
 
         if st.form_submit_button("💾 Save Feedback", use_container_width=True):
-            if not ev_sel or not text:
+            if st.session_state.get("feedback_just_added"):
+                pass
+            elif not ev_sel or not text:
                 st.error("Event and feedback text are required.")
             else:
+                st.session_state["feedback_just_added"] = True
                 add_feedback({"event_id":ev_sel,"participant_name":pname or None,
                                "feedback_text":text,"rating":rating})
                 st.success("✅ Feedback recorded!")

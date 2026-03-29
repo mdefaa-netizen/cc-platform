@@ -49,6 +49,8 @@ with tab_list:
                     st.info("Switch to Edit Colleague tab.")
 
 with tab_add:
+    if st.session_state.get("cdfa_just_added"):
+        st.session_state.pop("cdfa_just_added")
     st.markdown("### Add CDFA Colleague")
     with st.form("add_cdfa_form"):
         c1, c2 = st.columns(2)
@@ -61,9 +63,12 @@ with tab_add:
             phone = st.text_input("Phone")
         notes = st.text_area("Notes", height=80)
         if st.form_submit_button("💾 Save Colleague", use_container_width=True):
-            if not name:
+            if st.session_state.get("cdfa_just_added"):
+                pass
+            elif not name:
                 st.error("Name is required.")
             else:
+                st.session_state["cdfa_just_added"] = True
                 add_cdfa({"name": name, "title": title, "email": email,
                            "phone": phone, "role": role, "notes": notes})
                 st.success(f"✅ '{name}' added to CDFA Colleagues!")

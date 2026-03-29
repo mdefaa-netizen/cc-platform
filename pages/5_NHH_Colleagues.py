@@ -49,6 +49,8 @@ with tab_list:
                     st.info("Switch to Edit Colleague tab.")
 
 with tab_add:
+    if st.session_state.get("nhh_just_added"):
+        st.session_state.pop("nhh_just_added")
     st.markdown("### Add NHH Colleague")
     with st.form("add_nhh_form"):
         c1, c2 = st.columns(2)
@@ -61,9 +63,12 @@ with tab_add:
             phone = st.text_input("Phone")
         notes = st.text_area("Notes", height=80)
         if st.form_submit_button("💾 Save Colleague", use_container_width=True):
-            if not name:
+            if st.session_state.get("nhh_just_added"):
+                pass
+            elif not name:
                 st.error("Name is required.")
             else:
+                st.session_state["nhh_just_added"] = True
                 add_nhh({"name": name, "title": title, "email": email,
                           "phone": phone, "role": role, "notes": notes})
                 st.success(f"✅ '{name}' added to NHH Colleagues!")
