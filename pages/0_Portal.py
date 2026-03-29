@@ -98,7 +98,7 @@ notifs      = get_notifications(portal_role, unread_only=True)
 if notifs:
     st.markdown(f"### 🔔 Updates for You ({len(notifs)})")
     for n in notifs:
-        ts = n.get("created_at","")[:16] if n.get("created_at") else ""
+        ts = str(n.get("created_at",""))[:16] if n.get("created_at") else ""
         st.markdown(f"""
         <div style='background:#FEF9E7;border-left:4px solid #C8963E;padding:0.7rem 1rem;
         border-radius:0 8px 8px 0;margin-bottom:0.5rem;font-size:0.9rem'>
@@ -215,7 +215,7 @@ with tab_msg:
         st.caption("No messages yet.")
     else:
         for m in my_msgs:
-            ts   = m.get("created_at","")[:16] if m.get("created_at") else ""
+            ts   = str(m.get("created_at",""))[:16] if m.get("created_at") else ""
             icon = {"General":"💬","Attendance":"📊","Payment":"💰","Delay":"⏰",
                     "Problem":"🚨","Information":"ℹ️","Feedback":"📝","Cancellation":"❌"}.get(
                     m.get("category","General"),"💬")

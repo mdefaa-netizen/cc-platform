@@ -241,7 +241,7 @@ with tab_log:
     else:
         st.caption(f"Showing {len(filtered)} communication(s)")
         for c in filtered:
-            date_str = c.get("sent_date","")[:16] if c.get("sent_date") else ""
+            date_str = str(c.get("sent_date",""))[:16] if c.get("sent_date") else ""
             icon = {"Confirmation":"✅","Reminder":"🔔","Post-Event":"🙏","General":"💬"}.get(
                 c.get("communication_type",""),"📧")
             with st.expander(

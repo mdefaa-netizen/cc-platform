@@ -4,7 +4,8 @@
       "Bash(python:*)",
       "mcp__claude_ai_Supabase__execute_sql",
       "Bash(sqlite3 cc_platform.db \"SELECT COUNT\\(*\\) FROM activity_log;\")",
-      "Bash(pip install:*)"
+      "Bash(pip install:*)",
+      "WebFetch(domain:cc-platform-lwgykmwhsbf954mjqsdgl5.streamlit.app)"
     ]
   }
 }

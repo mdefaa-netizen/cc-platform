@@ -64,7 +64,7 @@ with tab_view:
         for fb in filtered:
             stars = "⭐" * (fb.get("rating") or 0)
             name  = fb.get("participant_name") or "Anonymous"
-            date  = (fb.get("submitted_date","")[:10]) if fb.get("submitted_date") else "—"
+            date  = str(fb.get("submitted_date",""))[:10] if fb.get("submitted_date") else "—"
             ev_name = fb.get("event_name","—")
             st.markdown(f"""
             <div class="section-box" style='margin-bottom:0.7rem;padding:0.9rem 1rem'>

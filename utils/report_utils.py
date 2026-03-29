@@ -85,7 +85,7 @@ def generate_excel(events, hosts, facilitators, feedback, date_label="All Events
     ws3.append(headers3)
     style_header_row(ws3, ws3.max_row, len(headers3))
     for fb in feedback:
-        ws3.append([fb.get("event_name",""), fb.get("submitted_date","")[:10] if fb.get("submitted_date") else "",
+        ws3.append([fb.get("event_name",""), str(fb.get("submitted_date",""))[:10] if fb.get("submitted_date") else "",
                     fb.get("participant_name",""), fb.get("rating",""), fb.get("feedback_text","")])
     auto_width(ws3)
 

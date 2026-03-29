@@ -53,7 +53,7 @@ CATEGORY_ICONS = {
 
 def render_message(m, show_reply=True):
     icon     = CATEGORY_ICONS.get(m.get("category","General"), "💬")
-    ts       = m.get("created_at","")[:16] if m.get("created_at") else ""
+    ts       = str(m.get("created_at",""))[:16] if m.get("created_at") else ""
     unread_b = "🔴 " if not m.get("is_read") else ""
     ev_name  = m.get("event_name","") or "—"
 

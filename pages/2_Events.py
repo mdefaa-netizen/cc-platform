@@ -282,7 +282,7 @@ with tab_view:
             if _is_coord:
                 st.markdown(f"**Communications ({len(comms)})**")
                 for c in comms[:5]:
-                    date_str = c.get("sent_date","")[:10] if c.get("sent_date") else ""
+                    date_str = str(c.get("sent_date",""))[:10] if c.get("sent_date") else ""
                     st.markdown(f"- {date_str} · {c.get('communication_type','')} · {c.get('subject','')[:40]}")
                 if not comms: st.caption("No communications logged.")
 

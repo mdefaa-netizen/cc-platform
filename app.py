@@ -150,7 +150,7 @@ notifs = get_notifications(role, unread_only=True)
 if notifs:
     st.markdown(f"### 🔔 Notifications ({len(notifs)} unread)")
     for n in notifs[:5]:
-        ts = n.get("created_at","")[:16] if n.get("created_at") else ""
+        ts = str(n.get("created_at",""))[:16] if n.get("created_at") else ""
         st.markdown(f"""
         <div style='background:#FEF9E7;border-left:4px solid #C8963E;padding:0.7rem 1rem;
         border-radius:0 8px 8px 0;margin-bottom:0.5rem;font-size:0.88rem'>
@@ -254,7 +254,7 @@ with col_act:
     st.markdown("**Recent Platform Activity**")
     if activity:
         for a in activity:
-            ts   = a.get("logged_at","")[:16] if a.get("logged_at") else ""
+            ts   = str(a.get("logged_at",""))[:16] if a.get("logged_at") else ""
             user = a.get("user","Coordinator")
             icon = {"Event":"📅","Payment":"💰","Communication":"📧","Task":"✅",
                     "Host":"👥","Facilitator":"🎤","Feedback":"📝"}.get(
@@ -272,7 +272,7 @@ with col_comm:
     st.markdown("**Recent Communications**")
     if comms:
         for c in comms:
-            date_str = c.get("sent_date","")[:10] if c.get("sent_date") else ""
+            date_str = str(c.get("sent_date",""))[:10] if c.get("sent_date") else ""
             st.markdown(f"""
             <div class="feed-item">
                 📧 <strong>{c.get('subject','')[:45]}</strong>
