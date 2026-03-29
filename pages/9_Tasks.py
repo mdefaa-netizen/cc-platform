@@ -1,4 +1,5 @@
 import streamlit as st
+import time
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -155,6 +156,8 @@ with tab_add:
                            "related_event_id": rel_ev or None,
                            "due_date":str(due),"priority":prio,"status":stat,"notes":notes})
                 st.success(f"✅ Task '{title}' created!")
+                time.sleep(3)
+                st.rerun()
 
 with tab_edit:
     task_opts = {t["task_id"]: f"{t['task_title']} (Due: {t.get('due_date','—')})" for t in tasks}
@@ -199,9 +202,12 @@ with tab_edit:
                     update_task(sel, {"task_title":title,"task_description":desc,
                                        "related_event_id": rel_ev or None,
                                        "due_date":str(due),"priority":prio,"status":stat,"notes":notes})
-                    st.success("✅ Task updated!")
                     st.session_state.pop("edit_task_id",None)
+                    st.success("✅ Task updated!")
+                    time.sleep(3)
+                    st.rerun()
                 if delb:
                     delete_task(sel)
                     st.success("🗑️ Task deleted.")
+                    time.sleep(3)
                     st.rerun()

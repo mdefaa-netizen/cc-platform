@@ -1,4 +1,5 @@
 import streamlit as st
+import time
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -66,6 +67,8 @@ with tab_add:
                 add_nhh({"name": name, "title": title, "email": email,
                           "phone": phone, "role": role, "notes": notes})
                 st.success(f"✅ '{name}' added to NHH Colleagues!")
+                time.sleep(3)
+                st.rerun()
 
 with tab_edit:
     colleagues2 = get_all_nhh()
@@ -95,7 +98,10 @@ with tab_edit:
                 update_nhh(sel, {"name": name, "title": title, "email": email,
                                    "phone": phone, "role": role, "notes": notes})
                 st.success("✅ Colleague updated!")
+                time.sleep(3)
+                st.rerun()
             if delb:
                 delete_nhh(sel)
                 st.success("🗑️ Deleted.")
+                time.sleep(3)
                 st.rerun()

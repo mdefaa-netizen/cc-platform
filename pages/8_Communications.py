@@ -1,4 +1,5 @@
 import streamlit as st
+import time
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -208,10 +209,14 @@ with tab_send:
 
             if success_count:
                 action = "sent" if send_btn else "logged"
-                st.success(f"✅ {success_count} message(s) {action} successfully!")
                 log_activity("Communication " + ("Sent" if send_btn else "Logged"),
                              f"{comm_type} — {subject[:50]} — {success_count} recipient(s)")
                 add_notification(f"Communication {action}: {subject[:50]}", "all")
+                st.success(f"✅ {success_count} message(s) {action} successfully!")
+                for err in errors:
+                    st.warning(f"⚠️ {err}")
+                time.sleep(3)
+                st.rerun()
             for err in errors:
                 st.warning(f"⚠️ {err}")
 

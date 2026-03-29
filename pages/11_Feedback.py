@@ -1,4 +1,5 @@
 import streamlit as st
+import time
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -43,6 +44,8 @@ with tab_add:
                 add_feedback({"event_id":ev_sel,"participant_name":pname or None,
                                "feedback_text":text,"rating":rating})
                 st.success("✅ Feedback recorded!")
+                time.sleep(3)
+                st.rerun()
 
 with tab_view:
     st.markdown("### All Feedback")
