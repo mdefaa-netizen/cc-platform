@@ -374,11 +374,12 @@ def add_facilitator(data):
 def update_facilitator(fac_id, data):
     conn = get_connection()
     _execute(conn, """
-        UPDATE facilitators SET name=%s,email=%s,phone=%s,check_payable_to=%s,
-            payment_amount=%s,payment_status=%s,payment_date=%s,specialization=%s,
+        UPDATE facilitators SET name=%s,email=%s,phone=%s,address=%s,city=%s,state=%s,zip_code=%s,
+            check_payable_to=%s,payment_amount=%s,payment_status=%s,payment_date=%s,specialization=%s,
             notes=%s,updated_at=CURRENT_TIMESTAMP
         WHERE facilitator_id=%s
     """, (data["name"], data.get("email"), data.get("phone"),
+          data.get("address"), data.get("city"), data.get("state", "NH"), data.get("zip_code"),
           data.get("check_payable_to"), data.get("payment_amount", 0),
           data.get("payment_status"), data.get("payment_date"),
           data.get("specialization"), data.get("notes"), fac_id))
