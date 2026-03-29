@@ -6,7 +6,8 @@ from utils.database import (init_db, init_mileage, get_dashboard_stats, get_over
                              get_upcoming_events, get_all_communications,
                              get_all_tasks, get_activity_log, init_activity_log,
                              get_notifications, get_unread_count, mark_notifications_read,
-                             get_unread_message_count, init_messages)
+                             get_unread_message_count, init_messages, get_all_messages,
+                             init_users, get_user_by_username, verify_password)
 from utils.styles import inject_css, page_header
 
 st.set_page_config(
@@ -21,30 +22,23 @@ init_db()
 init_activity_log()
 init_messages()
 init_mileage()
+init_users()
 
-# ── User Roles ─────────────────────────────────────────────────────────────────
-USERS = {
-    "coordinator": {"password": None, "role": "coordinator", "label": "Coordinator"},
-    "nhh":         {"password": None, "role": "nhh",         "label": "NHH Colleague"},
-    "cdfa":        {"password": None, "role": "cdfa",        "label": "CDFA Colleague"},
+ROLE_LABELS = {
+    "coordinator": "Coordinator",
+    "nhh":         "NHH Colleague",
+    "cdfa":        "CDFA Colleague",
+    "facilitator": "Facilitator",
+    "host":        "Host",
 }
 
-def get_passwords():
-    try:
-        USERS["coordinator"]["password"] = st.secrets.get("APP_PASSWORD",    "nhhumanities2025")
-        USERS["nhh"]["password"]         = st.secrets.get("NHH_PASSWORD",    "nhh2025")
-        USERS["cdfa"]["password"]        = st.secrets.get("CDFA_PASSWORD",   "cdfa2025")
-    except Exception:
-        USERS["coordinator"]["password"] = "nhhumanities2025"
-        USERS["nhh"]["password"]         = "nhh2025"
-        USERS["cdfa"]["password"]        = "cdfa2025"
-
 def check_password():
-    get_passwords()
     if "authenticated" not in st.session_state:
         st.session_state.authenticated = False
         st.session_state.user_role     = None
         st.session_state.user_label    = None
+        st.session_state.username      = None
+        st.session_state.linked_id     = None
 
     if st.session_state.authenticated:
         return True
@@ -61,22 +55,26 @@ def check_password():
     </div>
     """, unsafe_allow_html=True)
 
+    username = st.text_input("Username", placeholder="Enter your username")
     pwd = st.text_input("Password", type="password", placeholder="Enter your password")
     if st.button("Sign In", use_container_width=True):
-        matched = False
-        for ukey, udata in USERS.items():
-            if pwd == udata["password"]:
+        if username and pwd:
+            user = get_user_by_username(username.strip().lower())
+            if user and verify_password(pwd, user["password_hash"]):
                 st.session_state.authenticated = True
-                st.session_state.user_role     = udata["role"]
-                st.session_state.user_label    = udata["label"]
-                matched = True
-                break
-        if not matched:
-            st.error("Incorrect password.")
+                st.session_state.user_role     = user["role"]
+                st.session_state.user_label    = ROLE_LABELS.get(user["role"], user["role"].title())
+                st.session_state.username      = user["username"]
+                st.session_state.linked_id     = user.get("linked_id")
+                st.rerun()
+            else:
+                st.error("Invalid username or password.")
+        else:
+            st.error("Please enter both username and password.")
 
     st.markdown("""
     <div style='margin-top:1.5rem;padding-top:1rem;border-top:1px solid #eee;font-size:0.8rem;color:#aaa;text-align:center'>
-        Coordinator · NHH Colleague · CDFA Colleague
+        Coordinator · NHH · CDFA · Facilitator · Host
     </div></div>
     """, unsafe_allow_html=True)
     return False
@@ -87,6 +85,10 @@ if not check_password():
 role  = st.session_state.get("user_role", "coordinator")
 label = st.session_state.get("user_label", "Coordinator")
 is_coordinator = (role == "coordinator")
+
+# Facilitator/Host roles redirect to the portal page
+if role in ("facilitator", "host"):
+    st.switch_page("pages/0_Portal.py")
 
 # ── Sidebar ──────────────────────────────────────────────────────────────────
 stats         = get_dashboard_stats()
@@ -108,23 +110,41 @@ with st.sidebar:
     <hr style='border-color:#ffffff22;margin:0.5rem 0'>
     """, unsafe_allow_html=True)
 
-    st.page_link("app.py",                    label="🏠  Dashboard",        use_container_width=True)
-    st.page_link("pages/2_Events.py",          label="📅  Events",           use_container_width=True)
-    st.page_link("pages/3_Hosts.py",           label="👥  Hosts",            use_container_width=True)
-    st.page_link("pages/4_Facilitators.py",    label="🎤  Facilitators",     use_container_width=True)
-    st.page_link("pages/5_NHH_Colleagues.py",  label="🏛️  NHH Colleagues",  use_container_width=True)
-    st.page_link("pages/6_CDFA_Colleagues.py", label="🌾  CDFA Colleagues",  use_container_width=True)
-    st.page_link("pages/7_Payments.py",        label="💰  Payments",         use_container_width=True)
-    st.page_link("pages/8_Communications.py",  label="📧  Communications",   use_container_width=True)
-    if is_coordinator:
-        st.page_link("pages/9_Tasks.py",       label=f"✅  Tasks {'(!)' if overdue_count else ''}",  use_container_width=True)
-    st.page_link("pages/10_Reports.py",        label="📊  Reports",          use_container_width=True)
-    st.page_link("pages/11_Feedback.py",       label="📝  Feedback",         use_container_width=True)
-    st.page_link("pages/7_Payments.py",          label="🚗  Mileage",            use_container_width=True)
-    if is_coordinator:
+    # Role-based navigation
+    if role == "coordinator":
+        st.page_link("app.py",                    label="🏠  Dashboard",        use_container_width=True)
+        st.page_link("pages/2_Events.py",          label="📅  Events",           use_container_width=True)
+        st.page_link("pages/3_Hosts.py",           label="👥  Hosts",            use_container_width=True)
+        st.page_link("pages/4_Facilitators.py",    label="🎤  Facilitators",     use_container_width=True)
+        st.page_link("pages/5_NHH_Colleagues.py",  label="🏛️  NHH Colleagues",  use_container_width=True)
+        st.page_link("pages/6_CDFA_Colleagues.py", label="🌾  CDFA Colleagues",  use_container_width=True)
+        st.page_link("pages/7_Payments.py",        label="💰  Payments",         use_container_width=True)
+        st.page_link("pages/8_Communications.py",  label="📧  Communications",   use_container_width=True)
+        st.page_link("pages/9_Tasks.py",           label=f"✅  Tasks {'(!)' if overdue_count else ''}",  use_container_width=True)
+        st.page_link("pages/10_Reports.py",        label="📊  Reports",          use_container_width=True)
+        st.page_link("pages/11_Feedback.py",       label="📝  Feedback",         use_container_width=True)
+        st.page_link("pages/7_Payments.py",        label="🚗  Mileage",          use_container_width=True)
         st.page_link("pages/14_Messages.py",       label=f"💬  Messages {'(!)' if unread_msgs else ''}",   use_container_width=True)
         st.page_link("pages/13_Portal_Access.py",  label="🔑  Portal Access",    use_container_width=True)
         st.page_link("pages/12_Settings.py",       label="⚙️  Settings",         use_container_width=True)
+    elif role in ("cdfa", "nhh"):
+        st.page_link("app.py",                    label="🏠  Dashboard",        use_container_width=True)
+        st.page_link("pages/2_Events.py",          label="📅  Events",           use_container_width=True)
+        st.page_link("pages/3_Hosts.py",           label="👥  Hosts",            use_container_width=True)
+        st.page_link("pages/4_Facilitators.py",    label="🎤  Facilitators",     use_container_width=True)
+        st.page_link("pages/7_Payments.py",        label="💰  Payments",         use_container_width=True)
+        st.page_link("pages/10_Reports.py",        label="📊  Reports",          use_container_width=True)
+        st.page_link("pages/14_Messages.py",       label="💬  Messages",         use_container_width=True)
+    elif role == "facilitator":
+        st.page_link("pages/0_Portal.py",          label="📅  My Calendar",      use_container_width=True)
+        st.page_link("pages/4_Facilitators.py",    label="🎤  My Profile",       use_container_width=True)
+        st.page_link("pages/2_Events.py",          label="📅  My Events",        use_container_width=True)
+        st.page_link("pages/14_Messages.py",       label="💬  Messages",         use_container_width=True)
+    elif role == "host":
+        st.page_link("pages/0_Portal.py",          label="📅  My Calendar",      use_container_width=True)
+        st.page_link("pages/2_Events.py",          label="📅  My Events",        use_container_width=True)
+        st.page_link("pages/3_Hosts.py",           label="👥  My Profile",       use_container_width=True)
+        st.page_link("pages/14_Messages.py",       label="💬  Messages",         use_container_width=True)
 
     st.markdown("<hr style='border-color:#ffffff22;margin:0.5rem 0'>", unsafe_allow_html=True)
     if st.button("🔒 Sign Out", use_container_width=True):
@@ -239,6 +259,25 @@ if is_coordinator:
         if st.button("💰 Update Payment",      use_container_width=True): st.switch_page("pages/7_Payments.py")
     with qa4:
         if st.button("✅ Add Task",            use_container_width=True): st.switch_page("pages/9_Tasks.py")
+
+# Inbox Panel (coordinator only)
+if is_coordinator:
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown(f"### 💬 Message Inbox ({unread_msgs} unread)")
+    inbox_msgs = get_all_messages(unread_only=True)[:5]
+    if inbox_msgs:
+        for m in inbox_msgs:
+            ts = str(m.get("created_at",""))[:16] if m.get("created_at") else ""
+            st.markdown(f"""
+            <div class="section-box" style='margin-bottom:0.5rem;padding:0.7rem 1rem'>
+                🔴 <strong>{m.get('sender_name','Unknown')}</strong> ({m.get('sender_type','').title()})
+                · {m.get('category','')} · {m.get('subject','')[:40]}
+                <span style='color:#aaa;font-size:0.8rem'> · {ts}</span>
+            </div>""", unsafe_allow_html=True)
+        if st.button("📬 View All Messages", use_container_width=False):
+            st.switch_page("pages/14_Messages.py")
+    else:
+        st.success("📭 No unread messages.")
 
 # Real-time Activity Feed
 st.markdown("<br>", unsafe_allow_html=True)

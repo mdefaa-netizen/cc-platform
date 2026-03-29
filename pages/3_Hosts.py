@@ -3,25 +3,68 @@ import time
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from utils.database import log_activity, add_notification, get_all_hosts, get_host, add_host, update_host, delete_host, get_host_events, init_db
+from utils.database import (log_activity, add_notification, get_all_hosts, get_host,
+    add_host, update_host, delete_host, get_host_events, init_db,
+    init_users, create_user, username_exists)
+import secrets as _secrets
+import string as _string
 from utils.styles import inject_css, page_header
 
 st.set_page_config(page_title="Hosts · CC Platform", page_icon="👥", layout="wide")
 inject_css()
 init_db()
 
-if not st.session_state.get("authenticated"):
-    st.warning("Please sign in from the main page.")
+role = st.session_state.get("user_role", None)
+linked_id = st.session_state.get("linked_id", None)
+
+if role is None:
+    st.warning("Please log in.")
     st.stop()
 
-# Role awareness
-_role = st.session_state.get("user_role", "coordinator")
+if role not in ("coordinator", "host", "cdfa", "nhh"):
+    st.error("You do not have access to this page.")
+    st.stop()
+
+_role = role
 _is_coord = (_role == "coordinator")
 _user_label = st.session_state.get("user_label", "Coordinator")
 
 page_header("👥 Hosts Management", "Manage host venues and contacts for all events")
 
-tab_list, tab_add, tab_edit = st.tabs(["📋 All Hosts", "➕ Add Host", "✏️ Edit Host"])
+if _role == "host" and linked_id:
+    # Host can only view/edit their own profile
+    h = get_host(linked_id)
+    if not h:
+        st.warning("Your host profile was not found.")
+        st.stop()
+    st.markdown("### Your Profile")
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown(f"**Name:** {h.get('name','—')}")
+        st.markdown(f"**Venue:** {h.get('venue_name','—')}")
+        st.markdown(f"**Contact:** {h.get('contact_person','—')}")
+        st.markdown(f"**Email:** {h.get('email','—')}")
+        st.markdown(f"**Phone:** {h.get('phone','—')}")
+    with c2:
+        addr_parts = [p for p in [h.get('address'), h.get('city'), h.get('state'), h.get('zip_code')] if p]
+        st.markdown(f"**Address:** {', '.join(addr_parts) if addr_parts else '—'}")
+        if h.get("notes"):
+            st.caption(f"Notes: {h['notes']}")
+    events = get_host_events(linked_id)
+    if events:
+        st.markdown("### Your Events")
+        for ev in events:
+            badge = {"Scheduled":"🔵","Completed":"🟢","Cancelled":"🔴"}.get(ev.get("status",""),"⚪")
+            st.markdown(f"- {badge} **{ev['event_name']}** · {ev['event_date']} · {ev.get('city','')}")
+    st.stop()
+
+if _is_coord:
+    tab_list, tab_add, tab_edit = st.tabs(["📋 All Hosts", "➕ Add Host", "✏️ Edit Host"])
+else:
+    st.info(f"👁️ You are viewing as **{_user_label}** — read-only access.")
+    tab_list = st.tabs(["📋 All Hosts"])[0]
+    tab_add = None
+    tab_edit = None
 
 with tab_list:
     hosts = get_all_hosts()
@@ -55,11 +98,13 @@ with tab_list:
                     st.markdown(f"**Date Paid:** {h.get('payment_date','—') or '—'}")
                 if h.get("notes"):
                     st.caption(f"Notes: {h['notes']}")
-                if st.button("✏️ Edit This Host", key=f"edit_h_{h['host_id']}"):
-                    st.session_state["edit_host_id"] = h["host_id"]
-                    st.info("Switch to Edit Host tab.")
+                if _is_coord:
+                    if st.button("✏️ Edit This Host", key=f"edit_h_{h['host_id']}"):
+                        st.session_state["edit_host_id"] = h["host_id"]
+                        st.info("Switch to Edit Host tab.")
 
-with tab_add:
+if tab_add:
+  with tab_add:
     if st.session_state.get("host_just_added"):
         st.session_state.pop("host_just_added")
     st.markdown("### Add New Host")
@@ -98,10 +143,42 @@ with tab_add:
                     log_activity("Host Added", f"{name} — {venue}, {city}")
                     add_notification(f"New host added: {name}", "all")
                     st.success(f"✅ Host '{name}' added!")
-                    time.sleep(3)
+
+                    # Auto-generate login credentials
+                    try:
+                        init_users()
+                        all_hosts = get_all_hosts()
+                        new_host = next((h for h in all_hosts if h["name"].lower() == name.lower()), None)
+                        if new_host:
+                            # Generate username from venue name (slugified, max 20 chars)
+                            venue_str = (venue or name).strip().lower().replace(" ", ".")
+                            base_uname = venue_str[:20]
+                            uname = base_uname
+                            counter = 2
+                            while username_exists(uname):
+                                uname = f"{base_uname}{counter}"[:20]
+                                counter += 1
+                            # Generate password: Hst- + 5 random alphanumeric
+                            chars = _string.ascii_letters + _string.digits
+                            pwd = "Hst-" + "".join(_secrets.choice(chars) for _ in range(5))
+                            create_user(uname, pwd, "host", new_host["host_id"])
+                            st.success("🔑 Login credentials created!")
+                            st.markdown(f"""
+                            <div style='background:#D5F5E3;border-radius:8px;padding:1rem;margin:0.5rem 0'>
+                                <strong>Share these credentials with {name}:</strong><br>
+                                👤 Username: <code>{uname}</code><br>
+                                🔑 Password: <code>{pwd}</code><br>
+                                📋 Role: Host
+                            </div>
+                            """, unsafe_allow_html=True)
+                    except Exception as e:
+                        st.warning(f"Host saved but credential generation failed: {e}")
+
+                    time.sleep(5)
                     st.rerun()
 
-with tab_edit:
+if tab_edit:
+  with tab_edit:
     hosts2 = get_all_hosts()
     host_opts = {h["host_id"]: h["name"] for h in hosts2}
     default_id = st.session_state.get("edit_host_id", "")

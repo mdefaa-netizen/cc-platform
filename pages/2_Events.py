@@ -14,11 +14,14 @@ st.set_page_config(page_title="Events · CC Platform", page_icon="📅", layout=
 inject_css()
 init_db()
 
-if not st.session_state.get("authenticated"):
-    st.warning("Please sign in from the main page.")
+role = st.session_state.get("user_role", None)
+linked_id = st.session_state.get("linked_id", None)
+
+if role is None:
+    st.warning("Please log in.")
     st.stop()
 
-_role       = st.session_state.get("user_role", "coordinator")
+_role       = role
 _is_coord   = (_role == "coordinator")
 _user_label = st.session_state.get("user_label", "Coordinator")
 
@@ -46,6 +49,13 @@ with tab_list:
     for e in events:
         facs = get_event_facilitators(e["event_id"])
         e["facilitator_names"] = ", ".join(f["name"] for f in facs) if facs else "—"
+        e["_facilitator_ids"] = [f["facilitator_id"] for f in facs]
+
+    # Filter events for host/facilitator roles
+    if _role == "host" and linked_id:
+        events = [e for e in events if e.get("host_id") == linked_id]
+    elif _role == "facilitator" and linked_id:
+        events = [e for e in events if linked_id in e.get("_facilitator_ids", [])]
 
     col_f1, col_f2 = st.columns([2, 1])
     with col_f1:

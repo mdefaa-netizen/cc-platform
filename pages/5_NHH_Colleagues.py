@@ -10,13 +10,18 @@ st.set_page_config(page_title="NHH Colleagues · CC Platform", page_icon="🏛�
 inject_css()
 init_db()
 
-if not st.session_state.get("authenticated"):
-    st.warning("Please sign in from the main page.")
+role = st.session_state.get("user_role", None)
+
+if role is None:
+    st.warning("Please log in.")
     st.stop()
 
-# Role awareness
-_role = st.session_state.get("user_role", "coordinator")
-_is_coord = (_role == "coordinator")
+if role != "coordinator":
+    st.error("This page is only accessible to the Coordinator.")
+    st.stop()
+
+_role = role
+_is_coord = True
 _user_label = st.session_state.get("user_label", "Coordinator")
 
 page_header("🏛️ NH Humanities Colleagues", "Contacts at NH Humanities (NHH)")

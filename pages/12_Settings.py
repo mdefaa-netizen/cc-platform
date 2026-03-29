@@ -11,8 +11,14 @@ st.set_page_config(page_title="Settings · CC Platform", page_icon="⚙️", lay
 inject_css()
 init_db()
 
-if not st.session_state.get("authenticated"):
-    st.warning("Please sign in from the main page.")
+role = st.session_state.get("user_role", None)
+
+if role is None:
+    st.warning("Please log in.")
+    st.stop()
+
+if role != "coordinator":
+    st.error("Settings is only accessible to the Coordinator.")
     st.stop()
 
 page_header("⚙️ Settings", "Configure email, password, and manage your data")

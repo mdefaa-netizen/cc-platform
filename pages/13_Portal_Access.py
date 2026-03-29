@@ -15,11 +15,13 @@ inject_css()
 init_db()
 init_portal_access()
 
-if not st.session_state.get("authenticated"):
-    st.warning("Please sign in from the main page.")
+role = st.session_state.get("user_role", None)
+
+if role is None:
+    st.warning("Please log in.")
     st.stop()
 
-if st.session_state.get("user_role") != "coordinator":
+if role != "coordinator":
     st.error("This page is only accessible to the Coordinator.")
     st.stop()
 

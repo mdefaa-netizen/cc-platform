@@ -6,25 +6,66 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from utils.database import (
     log_activity, add_notification,
     get_all_facilitators, get_facilitator, add_facilitator,
-    update_facilitator, delete_facilitator, get_facilitator_events, init_db)
+    update_facilitator, delete_facilitator, get_facilitator_events, init_db,
+    init_users, create_user, username_exists)
+import secrets as _secrets
+import string as _string
 from utils.styles import inject_css, page_header
 
 st.set_page_config(page_title="Facilitators · CC Platform", page_icon="🎤", layout="wide")
 inject_css()
 init_db()
 
-if not st.session_state.get("authenticated"):
-    st.warning("Please sign in from the main page.")
+role = st.session_state.get("user_role", None)
+linked_id = st.session_state.get("linked_id", None)
+
+if role is None:
+    st.warning("Please log in.")
     st.stop()
 
-# Role awareness
-_role = st.session_state.get("user_role", "coordinator")
+if role not in ("coordinator", "facilitator", "cdfa", "nhh"):
+    st.error("You do not have access to this page.")
+    st.stop()
+
+_role = role
 _is_coord = (_role == "coordinator")
 _user_label = st.session_state.get("user_label", "Coordinator")
 
 page_header("🎤 Facilitators Management", "Manage the facilitator pool and event assignments")
 
-tab_list, tab_add, tab_edit = st.tabs(["📋 All Facilitators", "➕ Add Facilitator", "✏️ Edit Facilitator"])
+if _role == "facilitator" and linked_id:
+    # Facilitator can only view their own profile
+    f = get_facilitator(linked_id)
+    if not f:
+        st.warning("Your facilitator profile was not found.")
+        st.stop()
+    st.markdown("### Your Profile")
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown(f"**Name:** {f.get('name','—')}")
+        st.markdown(f"**Email:** {f.get('email','—')}")
+        st.markdown(f"**Phone:** {f.get('phone','—')}")
+        st.markdown(f"**Specialization:** {f.get('specialization','—') or '—'}")
+    with c2:
+        addr_parts = [p for p in [f.get('address'), f.get('city'), f.get('state'), f.get('zip_code')] if p]
+        st.markdown(f"**Address:** {', '.join(addr_parts) if addr_parts else '—'}")
+        if f.get("notes"):
+            st.caption(f"Notes: {f['notes']}")
+    events = get_facilitator_events(linked_id)
+    if events:
+        st.markdown("### Your Events")
+        for ev in events:
+            badge = {"Scheduled":"🔵","Completed":"🟢","Cancelled":"🔴"}.get(ev.get("status",""),"⚪")
+            st.markdown(f"- {badge} **{ev['event_name']}** · {ev['event_date']} · {ev.get('city','')}")
+    st.stop()
+
+if _is_coord:
+    tab_list, tab_add, tab_edit = st.tabs(["📋 All Facilitators", "➕ Add Facilitator", "✏️ Edit Facilitator"])
+else:
+    st.info(f"👁️ You are viewing as **{_user_label}** — read-only access.")
+    tab_list = st.tabs(["📋 All Facilitators"])[0]
+    tab_add = None
+    tab_edit = None
 
 with tab_list:
     facs = get_all_facilitators()
@@ -67,11 +108,13 @@ with tab_list:
                     for ev in events[:4]:
                         b2 = {"Scheduled":"🔵","Completed":"🟢","Cancelled":"🔴"}.get(ev.get("status",""),"⚪")
                         st.markdown(f"  - {b2} {ev['event_name']} · {ev['event_date']}")
-                if st.button("✏️ Edit", key=f"edit_f_{f['facilitator_id']}"):
-                    st.session_state["edit_fac_id"] = f["facilitator_id"]
-                    st.info("Switch to Edit Facilitator tab.")
+                if _is_coord:
+                    if st.button("✏️ Edit", key=f"edit_f_{f['facilitator_id']}"):
+                        st.session_state["edit_fac_id"] = f["facilitator_id"]
+                        st.info("Switch to Edit Facilitator tab.")
 
-with tab_add:
+if tab_add:
+  with tab_add:
     if st.session_state.get("facilitator_just_added"):
         st.session_state.pop("facilitator_just_added")
     st.markdown("### Add New Facilitator")
@@ -113,11 +156,43 @@ with tab_add:
                                       "payment_status":pstatus,"notes":notes})
                     log_activity("Facilitator Added", f"{name} — {spec}")
                     add_notification(f"New facilitator added: {name}", "all")
-                    st.success(f"✅ Facilitator '{name}' added!")
-                    time.sleep(3)
+                    st.success(f"Facilitator '{name}' added!")
+
+                    # Auto-generate login credentials
+                    try:
+                        init_users()
+                        # Find the newly added facilitator's ID
+                        all_facs = get_all_facilitators()
+                        new_fac = next((f for f in all_facs if f["name"].lower() == name.lower()), None)
+                        if new_fac:
+                            # Generate username: firstname.lastname
+                            base_uname = name.strip().lower().replace(" ", ".")
+                            uname = base_uname
+                            counter = 2
+                            while username_exists(uname):
+                                uname = f"{base_uname}{counter}"
+                                counter += 1
+                            # Generate password: Fac- + 5 random alphanumeric
+                            chars = _string.ascii_letters + _string.digits
+                            pwd = "Fac-" + "".join(_secrets.choice(chars) for _ in range(5))
+                            create_user(uname, pwd, "facilitator", new_fac["facilitator_id"])
+                            st.success("🔑 Login credentials created!")
+                            st.markdown(f"""
+                            <div style='background:#D5F5E3;border-radius:8px;padding:1rem;margin:0.5rem 0'>
+                                <strong>Share these credentials with {name}:</strong><br>
+                                👤 Username: <code>{uname}</code><br>
+                                🔑 Password: <code>{pwd}</code><br>
+                                📋 Role: Facilitator
+                            </div>
+                            """, unsafe_allow_html=True)
+                    except Exception as e:
+                        st.warning(f"Facilitator saved but credential generation failed: {e}")
+
+                    time.sleep(5)
                     st.rerun()
 
-with tab_edit:
+if tab_edit:
+  with tab_edit:
     facs2 = get_all_facilitators()
     fac_opts = {f["facilitator_id"]: f["name"] for f in facs2}
 

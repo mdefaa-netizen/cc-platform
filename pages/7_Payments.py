@@ -17,11 +17,18 @@ inject_css()
 init_db()
 init_mileage()  # Ensure mileage_reimbursements table exists
 
-if not st.session_state.get("authenticated"):
-    st.warning("Please sign in from the main page.")
+role = st.session_state.get("user_role", None)
+linked_id = st.session_state.get("linked_id", None)
+
+if role is None:
+    st.warning("Please log in.")
     st.stop()
 
-_role     = st.session_state.get("user_role", "coordinator")
+if role not in ("coordinator", "cdfa", "nhh"):
+    st.error("You do not have access to this page.")
+    st.stop()
+
+_role     = role
 _is_coord = (_role == "coordinator")
 
 page_header("💰 Payment Tracking", "Track and manage payments to facilitators")

@@ -53,12 +53,30 @@ def portal_login():
     """, unsafe_allow_html=True)
 
 if not st.session_state.portal_user:
-    # Only show portal login if not already signed in as coordinator
-    if st.session_state.get("authenticated"):
+    # If user logged in via main login as facilitator/host, auto-set portal_user
+    main_role = st.session_state.get("user_role")
+    main_linked = st.session_state.get("linked_id")
+    if st.session_state.get("authenticated") and main_role in ("facilitator", "host") and main_linked:
+        from utils.database import get_host, get_facilitator
+        if main_role == "host":
+            person = get_host(main_linked)
+            st.session_state.portal_user = {
+                "person_type": "host", "person_id": main_linked,
+                "person_name": person["name"] if person else "Host",
+            }
+        else:
+            person = get_facilitator(main_linked)
+            st.session_state.portal_user = {
+                "person_type": "facilitator", "person_id": main_linked,
+                "person_name": person["name"] if person else "Facilitator",
+            }
+        st.rerun()
+    elif st.session_state.get("authenticated"):
         st.info("You are signed in as Coordinator. This page is for hosts and facilitators.")
         st.stop()
-    portal_login()
-    st.stop()
+    else:
+        portal_login()
+        st.stop()
 
 # ── Portal Dashboard ───────────────────────────────────────────────────────────
 puser       = st.session_state.portal_user

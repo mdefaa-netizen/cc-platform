@@ -10,12 +10,13 @@ st.set_page_config(page_title="Feedback · CC Platform", page_icon="📝", layou
 inject_css()
 init_db()
 
-if not st.session_state.get("authenticated"):
-    st.warning("Please sign in from the main page.")
+role = st.session_state.get("user_role", None)
+
+if role is None:
+    st.warning("Please log in.")
     st.stop()
 
-# Role awareness
-_role = st.session_state.get("user_role", "coordinator")
+_role = role
 _is_coord = (_role == "coordinator")
 _user_label = st.session_state.get("user_label", "Coordinator")
 

@@ -9,6 +9,7 @@ import psycopg2
 import psycopg2.extras
 import streamlit as st
 from datetime import datetime, date, timedelta
+import hashlib, os, secrets, string
 
 DB_PATH = "supabase"  # Sentinel so any code that prints DB_PATH still works
 
@@ -42,6 +43,24 @@ def _execute(conn, query, params=None):
         cur.execute(query, params or ())
     conn.commit()
     conn.close()
+
+
+# ── Password Hashing ─────────────────────────────────────────────────────────
+
+def hash_password(password: str) -> str:
+    salt = os.urandom(16)
+    dk = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, 260_000)
+    return salt.hex() + ":" + dk.hex()
+
+
+def verify_password(password: str, stored_hash: str) -> bool:
+    try:
+        salt_hex, dk_hex = stored_hash.split(":")
+        salt = bytes.fromhex(salt_hex)
+        dk = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, 260_000)
+        return dk.hex() == dk_hex
+    except Exception:
+        return False
 
 
 # ── Schema Initialisation ─────────────────────────────────────────────────────
@@ -191,6 +210,54 @@ def init_db():
         """)
     conn.commit()
     conn.close()
+
+
+def init_users():
+    conn = get_connection()
+    with conn.cursor() as cur:
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                user_id SERIAL PRIMARY KEY,
+                username TEXT UNIQUE NOT NULL,
+                password_hash TEXT NOT NULL,
+                role TEXT NOT NULL CHECK (role IN ('coordinator','facilitator','host','cdfa','nhh')),
+                linked_id INTEGER,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        # Seed default users if table is empty
+        cur.execute("SELECT COUNT(*) FROM users")
+        if cur.fetchone()[0] == 0:
+            defaults = [
+                ("coordinator", "nhhumanities2025", "coordinator"),
+                ("nhh",         "nhh2025",          "nhh"),
+                ("cdfa",        "cdfa2025",         "cdfa"),
+            ]
+            for uname, pwd, role in defaults:
+                cur.execute(
+                    "INSERT INTO users (username, password_hash, role) VALUES (%s,%s,%s)",
+                    (uname, hash_password(pwd), role))
+    conn.commit()
+    conn.close()
+
+
+def get_user_by_username(username):
+    conn = get_connection()
+    return _fetchone(conn, "SELECT * FROM users WHERE username=%s", (username,))
+
+
+def create_user(username, password, role, linked_id=None):
+    conn = get_connection()
+    _execute(conn, """
+        INSERT INTO users (username, password_hash, role, linked_id)
+        VALUES (%s,%s,%s,%s)
+    """, (username, hash_password(password), role, linked_id))
+
+
+def username_exists(username):
+    conn = get_connection()
+    row = _fetchone(conn, "SELECT user_id FROM users WHERE username=%s", (username,))
+    return row is not None
 
 
 def init_mileage():
@@ -906,6 +973,13 @@ def reply_to_message(message_id, reply_body):
 def get_messages_for_person(sender_type, sender_id):
     init_messages()
     conn = get_connection()
+    if sender_id is None:
+        return _fetchall(conn, """
+            SELECT m.*, e.event_name FROM messages m
+            LEFT JOIN events e ON m.event_id=e.event_id
+            WHERE m.sender_type=%s AND m.sender_id IS NULL
+            ORDER BY m.created_at DESC
+        """, (sender_type,))
     return _fetchall(conn, """
         SELECT m.*, e.event_name FROM messages m
         LEFT JOIN events e ON m.event_id=e.event_id

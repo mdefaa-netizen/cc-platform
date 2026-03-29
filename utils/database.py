@@ -1,5 +1,8 @@
 import sqlite3
 import os
+import hashlib
+import secrets
+import string
 from datetime import datetime
 
 DB_PATH = os.environ.get("DB_PATH", "cc_platform.db")
@@ -137,6 +140,71 @@ def init_db():
     """)
     conn.commit()
     conn.close()
+
+# ── Password Hashing ─────────────────────────────────────────────────────────
+
+def hash_password(password: str) -> str:
+    salt = os.urandom(16)
+    dk = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, 260_000)
+    return salt.hex() + ":" + dk.hex()
+
+def verify_password(password: str, stored_hash: str) -> bool:
+    try:
+        salt_hex, dk_hex = stored_hash.split(":")
+        salt = bytes.fromhex(salt_hex)
+        dk = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, 260_000)
+        return dk.hex() == dk_hex
+    except Exception:
+        return False
+
+# ── Users ─────────────────────────────────────────────────────────────────────
+
+def init_users():
+    conn = get_connection()
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS users (
+            user_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            role TEXT NOT NULL CHECK (role IN ('coordinator','facilitator','host','cdfa','nhh')),
+            linked_id INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+    """)
+    # Seed default users if table is empty
+    count = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+    if count == 0:
+        defaults = [
+            ("coordinator", "nhhumanities2025", "coordinator"),
+            ("nhh",         "nhh2025",          "nhh"),
+            ("cdfa",        "cdfa2025",         "cdfa"),
+        ]
+        for uname, pwd, role in defaults:
+            conn.execute(
+                "INSERT INTO users (username, password_hash, role) VALUES (?,?,?)",
+                (uname, hash_password(pwd), role))
+    conn.commit()
+    conn.close()
+
+def get_user_by_username(username):
+    conn = get_connection()
+    row = conn.execute("SELECT * FROM users WHERE username=?", (username,)).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+def create_user(username, password, role, linked_id=None):
+    conn = get_connection()
+    conn.execute(
+        "INSERT INTO users (username, password_hash, role, linked_id) VALUES (?,?,?,?)",
+        (username, hash_password(password), role, linked_id))
+    conn.commit()
+    conn.close()
+
+def username_exists(username):
+    conn = get_connection()
+    row = conn.execute("SELECT user_id FROM users WHERE username=?", (username,)).fetchone()
+    conn.close()
+    return row is not None
 
 # ── Hosts ──────────────────────────────────────────────────────────────────────
 
@@ -852,12 +920,20 @@ def reply_to_message(message_id, reply_body):
 def get_messages_for_person(sender_type, sender_id):
     conn = get_connection()
     init_messages()
-    rows = conn.execute("""
-        SELECT m.*, e.event_name FROM messages m
-        LEFT JOIN events e ON m.event_id=e.event_id
-        WHERE m.sender_type=? AND m.sender_id=?
-        ORDER BY m.created_at DESC
-    """, (sender_type, sender_id)).fetchall()
+    if sender_id is None:
+        rows = conn.execute("""
+            SELECT m.*, e.event_name FROM messages m
+            LEFT JOIN events e ON m.event_id=e.event_id
+            WHERE m.sender_type=? AND m.sender_id IS NULL
+            ORDER BY m.created_at DESC
+        """, (sender_type,)).fetchall()
+    else:
+        rows = conn.execute("""
+            SELECT m.*, e.event_name FROM messages m
+            LEFT JOIN events e ON m.event_id=e.event_id
+            WHERE m.sender_type=? AND m.sender_id=?
+            ORDER BY m.created_at DESC
+        """, (sender_type, sender_id)).fetchall()
     conn.close()
     return [dict(r) for r in rows]
 
