@@ -143,17 +143,23 @@ def init_db():
 
 # ── Password Hashing ─────────────────────────────────────────────────────────
 
+_PBKDF2_ITERATIONS = 100_000
+
 def hash_password(password: str) -> str:
     salt = os.urandom(16)
-    dk = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, 260_000)
+    dk = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, _PBKDF2_ITERATIONS)
     return salt.hex() + ":" + dk.hex()
 
 def verify_password(password: str, stored_hash: str) -> bool:
     try:
         salt_hex, dk_hex = stored_hash.split(":")
         salt = bytes.fromhex(salt_hex)
-        dk = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, 260_000)
-        return dk.hex() == dk_hex
+        # Try current iteration count first, then legacy 260K
+        for iters in (_PBKDF2_ITERATIONS, 260_000):
+            dk = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, iters)
+            if dk.hex() == dk_hex:
+                return True
+        return False
     except Exception:
         return False
 

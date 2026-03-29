@@ -14,9 +14,13 @@ from utils.styles import inject_css
 st.set_page_config(page_title="My Portal · Community Conversations",
                    page_icon="🗺️", layout="wide")
 inject_css()
-init_db()
-init_messages()
-init_portal_access()
+try:
+    from utils.database import init_all
+    init_all()
+except ImportError:
+    init_db()
+    init_messages()
+    init_portal_access()
 
 # ── Portal Login ───────────────────────────────────────────────────────────────
 if "portal_user" not in st.session_state:

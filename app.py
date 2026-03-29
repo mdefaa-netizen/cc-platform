@@ -8,6 +8,10 @@ from utils.database import (init_db, init_mileage, get_dashboard_stats, get_over
                              get_notifications, get_unread_count, mark_notifications_read,
                              get_unread_message_count, init_messages, get_all_messages,
                              init_users, get_user_by_username, verify_password)
+try:
+    from utils.database import init_all
+except ImportError:
+    init_all = None
 from utils.styles import inject_css, page_header
 
 st.set_page_config(
@@ -18,11 +22,10 @@ st.set_page_config(
 )
 
 inject_css()
-init_db()
-init_activity_log()
-init_messages()
-init_mileage()
-init_users()
+if init_all:
+    init_all()   # single DB connection for all tables
+else:
+    init_db(); init_activity_log(); init_messages(); init_mileage(); init_users()
 
 ROLE_LABELS = {
     "coordinator": "Coordinator",

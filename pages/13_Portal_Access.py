@@ -12,8 +12,12 @@ from utils.styles import inject_css, page_header
 
 st.set_page_config(page_title="Portal Access · CC Platform", page_icon="🔑", layout="wide")
 inject_css()
-init_db()
-init_portal_access()
+try:
+    from utils.database import init_all
+    init_all()
+except ImportError:
+    init_db()
+    init_portal_access()
 
 role = st.session_state.get("user_role", None)
 

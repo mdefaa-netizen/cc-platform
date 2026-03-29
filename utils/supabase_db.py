@@ -47,9 +47,11 @@ def _execute(conn, query, params=None):
 
 # ── Password Hashing ─────────────────────────────────────────────────────────
 
+_PBKDF2_ITERATIONS = 100_000
+
 def hash_password(password: str) -> str:
     salt = os.urandom(16)
-    dk = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, 260_000)
+    dk = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, _PBKDF2_ITERATIONS)
     return salt.hex() + ":" + dk.hex()
 
 
@@ -57,15 +59,160 @@ def verify_password(password: str, stored_hash: str) -> bool:
     try:
         salt_hex, dk_hex = stored_hash.split(":")
         salt = bytes.fromhex(salt_hex)
-        dk = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, 260_000)
-        return dk.hex() == dk_hex
+        # Try current iteration count first, then legacy 260K
+        for iters in (_PBKDF2_ITERATIONS, 260_000):
+            dk = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, iters)
+            if dk.hex() == dk_hex:
+                return True
+        return False
     except Exception:
         return False
 
 
 # ── Schema Initialisation ─────────────────────────────────────────────────────
 
+_schema_initialised = False
+
+def init_all():
+    """Initialise every table in a single DB connection. Cached by caller."""
+    global _schema_initialised
+    if _schema_initialised:
+        return
+    conn = get_connection()
+    with conn.cursor() as cur:
+        # hosts
+        cur.execute("""CREATE TABLE IF NOT EXISTS hosts (
+            host_id SERIAL PRIMARY KEY, name TEXT NOT NULL, venue_name TEXT,
+            address TEXT, city TEXT, state TEXT DEFAULT 'NH', zip_code TEXT,
+            contact_person TEXT, email TEXT, phone TEXT, check_payable_to TEXT,
+            payment_amount REAL DEFAULT 0, payment_status TEXT DEFAULT 'Pending',
+            payment_date DATE, notes TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
+        # facilitators
+        cur.execute("""CREATE TABLE IF NOT EXISTS facilitators (
+            facilitator_id SERIAL PRIMARY KEY, name TEXT NOT NULL, email TEXT,
+            phone TEXT, address TEXT, city TEXT, state TEXT DEFAULT 'NH',
+            zip_code TEXT, check_payable_to TEXT,
+            payment_amount REAL DEFAULT 0, payment_status TEXT DEFAULT 'Pending',
+            payment_date DATE, specialization TEXT, notes TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
+        # nhh_colleagues
+        cur.execute("""CREATE TABLE IF NOT EXISTS nhh_colleagues (
+            nhh_id SERIAL PRIMARY KEY, name TEXT NOT NULL, title TEXT,
+            email TEXT, phone TEXT, role TEXT, notes TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
+        # cdfa_colleagues
+        cur.execute("""CREATE TABLE IF NOT EXISTS cdfa_colleagues (
+            cdfa_id SERIAL PRIMARY KEY, name TEXT NOT NULL, title TEXT,
+            email TEXT, phone TEXT, role TEXT, notes TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
+        # events
+        cur.execute("""CREATE TABLE IF NOT EXISTS events (
+            event_id SERIAL PRIMARY KEY, event_name TEXT NOT NULL,
+            event_date DATE NOT NULL, event_time TEXT,
+            host_id INTEGER REFERENCES hosts(host_id),
+            venue_address TEXT, city TEXT, status TEXT DEFAULT 'Scheduled',
+            attendance_count INTEGER, attendance_confirmed INTEGER DEFAULT 0,
+            event_summary TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
+        # event_facilitators
+        cur.execute("""CREATE TABLE IF NOT EXISTS event_facilitators (
+            event_facilitator_id SERIAL PRIMARY KEY,
+            event_id INTEGER REFERENCES events(event_id),
+            facilitator_id INTEGER REFERENCES facilitators(facilitator_id))""")
+        # communications
+        cur.execute("""CREATE TABLE IF NOT EXISTS communications (
+            communication_id SERIAL PRIMARY KEY, recipient_type TEXT,
+            recipient_id INTEGER, event_id INTEGER REFERENCES events(event_id),
+            communication_type TEXT, subject TEXT, body TEXT,
+            sent_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            sent_by TEXT DEFAULT 'Coordinator', notes TEXT)""")
+        # tasks
+        cur.execute("""CREATE TABLE IF NOT EXISTS tasks (
+            task_id SERIAL PRIMARY KEY, task_title TEXT NOT NULL,
+            task_description TEXT,
+            related_event_id INTEGER REFERENCES events(event_id),
+            due_date DATE, priority TEXT DEFAULT 'Medium',
+            status TEXT DEFAULT 'Not Started',
+            assigned_to TEXT DEFAULT 'Coordinator',
+            completed_date DATE, notes TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
+        # feedback
+        cur.execute("""CREATE TABLE IF NOT EXISTS feedback (
+            feedback_id SERIAL PRIMARY KEY,
+            event_id INTEGER REFERENCES events(event_id),
+            participant_name TEXT, feedback_text TEXT, rating INTEGER,
+            submitted_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
+        # reports
+        cur.execute("""CREATE TABLE IF NOT EXISTS reports (
+            report_id SERIAL PRIMARY KEY, report_type TEXT, report_name TEXT,
+            generated_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            file_path TEXT, notes TEXT)""")
+        # mileage_reimbursements
+        cur.execute("""CREATE TABLE IF NOT EXISTS mileage_reimbursements (
+            mileage_id SERIAL PRIMARY KEY,
+            facilitator_id INTEGER REFERENCES facilitators(facilitator_id),
+            event_id INTEGER REFERENCES events(event_id),
+            facilitator_address TEXT, event_address TEXT,
+            distance_miles REAL, round_trip_miles REAL,
+            rate_per_mile REAL DEFAULT 0.725, reimbursement_amount REAL,
+            status TEXT DEFAULT 'Pending', notes TEXT,
+            calculated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
+        # portal_access
+        cur.execute("""CREATE TABLE IF NOT EXISTS portal_access (
+            access_id SERIAL PRIMARY KEY, person_type TEXT NOT NULL,
+            person_id INTEGER NOT NULL, username TEXT UNIQUE NOT NULL,
+            password TEXT NOT NULL, is_active INTEGER DEFAULT 0,
+            granted_by TEXT DEFAULT 'Coordinator', granted_at TIMESTAMP,
+            notes TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
+        # activity_log
+        cur.execute("""CREATE TABLE IF NOT EXISTS activity_log (
+            log_id SERIAL PRIMARY KEY, action TEXT NOT NULL, details TEXT,
+            "user" TEXT DEFAULT 'Coordinator',
+            logged_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
+        # messages
+        cur.execute("""CREATE TABLE IF NOT EXISTS messages (
+            message_id SERIAL PRIMARY KEY, sender_type TEXT NOT NULL,
+            sender_id INTEGER, sender_name TEXT,
+            event_id INTEGER REFERENCES events(event_id),
+            category TEXT, subject TEXT, body TEXT NOT NULL,
+            is_read INTEGER DEFAULT 0, replied_at TIMESTAMP,
+            reply_body TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
+        # notifications
+        cur.execute("""CREATE TABLE IF NOT EXISTS notifications (
+            notif_id SERIAL PRIMARY KEY, message TEXT NOT NULL,
+            target_role TEXT DEFAULT 'all', event_id INTEGER,
+            is_read INTEGER DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
+        # users
+        cur.execute("""CREATE TABLE IF NOT EXISTS users (
+            user_id SERIAL PRIMARY KEY,
+            username TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            role TEXT NOT NULL CHECK (role IN ('coordinator','facilitator','host','cdfa','nhh')),
+            linked_id INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
+        # Seed default users if table is empty
+        cur.execute("SELECT COUNT(*) FROM users")
+        if cur.fetchone()[0] == 0:
+            for uname, pwd, r in [("coordinator","nhhumanities2025","coordinator"),
+                                   ("nhh","nhh2025","nhh"),("cdfa","cdfa2025","cdfa")]:
+                cur.execute("INSERT INTO users (username,password_hash,role) VALUES (%s,%s,%s)",
+                            (uname, hash_password(pwd), r))
+    conn.commit()
+    conn.close()
+    _schema_initialised = True
+
+
 def init_db():
+    if _schema_initialised:
+        return
     conn = get_connection()
     with conn.cursor() as cur:
         cur.execute("""
@@ -213,6 +360,8 @@ def init_db():
 
 
 def init_users():
+    if _schema_initialised:
+        return
     conn = get_connection()
     with conn.cursor() as cur:
         cur.execute("""
@@ -261,6 +410,8 @@ def username_exists(username):
 
 
 def init_mileage():
+    if _schema_initialised:
+        return
     conn = get_connection()
     with conn.cursor() as cur:
         cur.execute("""
@@ -284,6 +435,8 @@ def init_mileage():
 
 
 def init_portal_access():
+    if _schema_initialised:
+        return
     conn = get_connection()
     with conn.cursor() as cur:
         cur.execute("""
@@ -305,6 +458,8 @@ def init_portal_access():
 
 
 def init_activity_log():
+    if _schema_initialised:
+        return
     conn = get_connection()
     with conn.cursor() as cur:
         cur.execute("""
@@ -321,6 +476,8 @@ def init_activity_log():
 
 
 def init_messages():
+    if _schema_initialised:
+        return
     conn = get_connection()
     with conn.cursor() as cur:
         cur.execute("""
@@ -344,6 +501,8 @@ def init_messages():
 
 
 def _ensure_notifications():
+    if _schema_initialised:
+        return
     conn = get_connection()
     with conn.cursor() as cur:
         cur.execute("""
@@ -801,15 +960,16 @@ def get_dashboard_stats():
 def log_activity(action: str, details: str, user: str = "Coordinator"):
     conn = get_connection()
     with conn.cursor() as cur:
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS activity_log (
-                log_id SERIAL PRIMARY KEY,
-                action TEXT NOT NULL,
-                details TEXT,
-                "user" TEXT DEFAULT 'Coordinator',
-                logged_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
+        if not _schema_initialised:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS activity_log (
+                    log_id SERIAL PRIMARY KEY,
+                    action TEXT NOT NULL,
+                    details TEXT,
+                    "user" TEXT DEFAULT 'Coordinator',
+                    logged_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
         cur.execute(
             'INSERT INTO activity_log (action, details, "user") VALUES (%s,%s,%s)',
             (action, details, user))

@@ -14,8 +14,12 @@ from utils.styles import inject_css, page_header
 
 st.set_page_config(page_title="Payments · CC Platform", page_icon="💰", layout="wide")
 inject_css()
-init_db()
-init_mileage()  # Ensure mileage_reimbursements table exists
+try:
+    from utils.database import init_all
+    init_all()
+except ImportError:
+    init_db()
+    init_mileage()  # Ensure mileage_reimbursements table exists
 
 role = st.session_state.get("user_role", None)
 linked_id = st.session_state.get("linked_id", None)
