@@ -1,4 +1,5 @@
 import streamlit as st
+import time
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -50,6 +51,8 @@ with tab_list:
                     st.markdown(f"**Email:** {f.get('email','—')}")
                     st.markdown(f"**Phone:** {f.get('phone','—')}")
                     st.markdown(f"**Specialization:** {f.get('specialization','—') or '—'}")
+                    addr_parts = [p for p in [f.get('address'), f.get('city'), f.get('state'), f.get('zip_code')] if p]
+                    st.markdown(f"**Address:** {', '.join(addr_parts) if addr_parts else '—'}")
                 with c2:
                     st.markdown(f"**Check Payable To:** {f.get('check_payable_to','—')}")
                     st.markdown(f"**Payment Amount:** ${f.get('payment_amount',0):.2f}")
@@ -78,6 +81,14 @@ with tab_add:
             phone  = st.text_input("Phone")
             spec   = st.text_input("Specialization", placeholder="e.g., History, Civic Engagement")
         with c2:
+            address = st.text_input("Address")
+            a_c1, a_c2, a_c3 = st.columns([3, 2, 2])
+            with a_c1:
+                city = st.text_input("City")
+            with a_c2:
+                state = st.text_input("State", value="NH")
+            with a_c3:
+                zip_code = st.text_input("Zip Code")
             payable = st.text_input("Check Payable To")
             amount  = st.number_input("Payment Amount ($)", min_value=0.0, step=50.0)
             pstatus = st.selectbox("Payment Status", ["Pending","Approved","Paid"])
@@ -90,12 +101,16 @@ with tab_add:
                 if existing:
                     st.error(f"A facilitator named '{name}' already exists. Use Edit to update.")
                 else:
-                    add_facilitator({"name":name,"email":email,"phone":phone,"specialization":spec,
+                    add_facilitator({"name":name,"email":email,"phone":phone,
+                                      "address":address,"city":city,"state":state,"zip_code":zip_code,
+                                      "specialization":spec,
                                       "check_payable_to":payable,"payment_amount":amount,
                                       "payment_status":pstatus,"notes":notes})
+                    log_activity("Facilitator Added", f"{name} — {spec}")
+                    add_notification(f"New facilitator added: {name}", "all")
                     st.success(f"✅ Facilitator '{name}' added!")
-                log_activity("Facilitator Added", f"{name} — {spec}")
-                add_notification(f"New facilitator added: {name}", "all")
+                    time.sleep(3)
+                    st.rerun()
 
 with tab_edit:
     facs2 = get_all_facilitators()
@@ -113,6 +128,14 @@ with tab_edit:
                 phone  = st.text_input("Phone", value=f.get("phone",""))
                 spec   = st.text_input("Specialization", value=f.get("specialization","") or "")
             with c2:
+                address = st.text_input("Address", value=f.get("address","") or "")
+                a_c1, a_c2, a_c3 = st.columns([3, 2, 2])
+                with a_c1:
+                    city = st.text_input("City", value=f.get("city","") or "")
+                with a_c2:
+                    state = st.text_input("State", value=f.get("state","NH") or "NH")
+                with a_c3:
+                    zip_code = st.text_input("Zip Code", value=f.get("zip_code","") or "")
                 payable = st.text_input("Check Payable To", value=f.get("check_payable_to",""))
                 amount  = st.number_input("Payment Amount ($)", value=float(f.get("payment_amount",0)), min_value=0.0, step=50.0)
                 pstatus = st.selectbox("Payment Status", ["Pending","Approved","Paid"],
@@ -132,13 +155,18 @@ with tab_edit:
                 delb = st.form_submit_button("🗑️ Delete", use_container_width=True)
 
             if save:
-                update_facilitator(sel, {"name":name,"email":email,"phone":phone,"specialization":spec,
+                update_facilitator(sel, {"name":name,"email":email,"phone":phone,
+                                          "address":address,"city":city,"state":state,"zip_code":zip_code,
+                                          "specialization":spec,
                                           "check_payable_to":payable,"payment_amount":amount,
                                           "payment_status":pstatus,
                                           "payment_date":str(pdate) if pdate else None,"notes":notes})
-                st.success("✅ Facilitator updated!")
                 log_activity("Facilitator Updated", f"{name} — payment: {pstatus}")
+                st.success("✅ Facilitator updated!")
+                time.sleep(3)
+                st.rerun()
             if delb:
                 delete_facilitator(sel)
                 st.success("🗑️ Facilitator deleted.")
+                time.sleep(3)
                 st.rerun()
