@@ -228,6 +228,17 @@ def username_exists(username):
         row = conn.execute("SELECT user_id FROM users WHERE username=?", (username,)).fetchone()
         return row is not None
 
+def get_all_users():
+    with _safe_conn() as conn:
+        rows = conn.execute("SELECT user_id, username, role, linked_id, created_at FROM users ORDER BY username").fetchall()
+        return [dict(r) for r in rows]
+
+def reset_user_password(username, new_password):
+    with _safe_conn() as conn:
+        conn.execute("UPDATE users SET password_hash=? WHERE username=?",
+                     (hash_password(new_password), username))
+        conn.commit()
+
 # ── Hosts ──────────────────────────────────────────────────────────────────────
 
 def get_all_hosts():

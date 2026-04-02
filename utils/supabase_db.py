@@ -451,6 +451,17 @@ def username_exists(username):
     return row is not None
 
 
+def get_all_users():
+    conn = get_connection()
+    return _fetchall(conn, "SELECT user_id, username, role, linked_id, created_at FROM users ORDER BY username")
+
+
+def reset_user_password(username, new_password):
+    conn = get_connection()
+    _execute(conn, "UPDATE users SET password_hash=%s WHERE username=%s",
+             (hash_password(new_password), username))
+
+
 def init_mileage():
     if _schema_initialised:
         return

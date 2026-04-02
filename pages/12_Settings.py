@@ -3,9 +3,12 @@ import sys, os, io, csv, smtplib
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from utils.database import log_activity, add_notification, DB_PATH, get_connection, init_db
+from utils.database import (log_activity, add_notification, DB_PATH, get_connection, init_db,
+                            get_all_users, reset_user_password, create_user, username_exists,
+                            hash_password, verify_password)
 from utils.email_utils import get_smtp_config
 from utils.styles import inject_css, page_header
+import secrets as _secrets, string as _string
 
 st.set_page_config(page_title="Settings · CC Platform", page_icon="⚙️", layout="wide")
 inject_css()
@@ -26,7 +29,83 @@ if role != "coordinator":
 
 page_header("⚙️ Settings", "Configure email, password, and manage your data")
 
-tab_email, tab_data, tab_about = st.tabs(["📧 Email Setup", "🗄️ Data Management", "ℹ️ About"])
+tab_users, tab_email, tab_data, tab_about = st.tabs(["👥 User Management", "📧 Email Setup", "🗄️ Data Management", "ℹ️ About"])
+
+with tab_users:
+    st.markdown("### All User Accounts")
+    users = get_all_users()
+    if users:
+        for u in users:
+            role_icons = {"coordinator": "👑", "nhh": "🏛️", "cdfa": "🌾",
+                         "facilitator": "🎤", "host": "👥"}
+            icon = role_icons.get(u["role"], "👤")
+            st.markdown(f"- {icon} **{u['username']}** — {u['role'].title()}"
+                       f" (created: {str(u.get('created_at',''))[:10]})")
+    else:
+        st.info("No users found.")
+
+    st.markdown("---")
+    st.markdown("### Reset a User's Password")
+    st.caption("Use this to reset any user's password, including your own.")
+    with st.form("reset_pw_form"):
+        user_opts = {u["username"]: f"{u['username']} ({u['role']})" for u in users}
+        sel_user = st.selectbox("Select user", options=list(user_opts.keys()),
+                                format_func=lambda x: user_opts[x])
+        new_pw = st.text_input("New Password", type="password",
+                               placeholder="Enter new password (min 8 characters)")
+        confirm_pw = st.text_input("Confirm Password", type="password",
+                                   placeholder="Re-enter new password")
+        if st.form_submit_button("🔑 Reset Password", use_container_width=True):
+            if not new_pw or not confirm_pw:
+                st.error("Both password fields are required.")
+            elif new_pw != confirm_pw:
+                st.error("Passwords do not match.")
+            elif len(new_pw) < 8:
+                st.error("Password must be at least 8 characters.")
+            else:
+                reset_user_password(sel_user, new_pw)
+                log_activity("Password Reset", f"Password reset for user: {sel_user}")
+                st.success(f"Password reset for **{sel_user}**!")
+
+    st.markdown("---")
+    st.markdown("### Create New User Account")
+    st.caption("Create accounts for NHH colleagues, CDFA colleagues, or additional coordinators.")
+    with st.form("create_user_form"):
+        c1, c2 = st.columns(2)
+        with c1:
+            new_username = st.text_input("Username *", placeholder="e.g., jsmith")
+            new_role = st.selectbox("Role *", ["coordinator", "nhh", "cdfa"])
+        with c2:
+            _chars = _string.ascii_letters + _string.digits + "!@#$%"
+            suggested_pw = "".join(_secrets.choice(_chars) for _ in range(16))
+            new_user_pw = st.text_input("Password *", value=suggested_pw, type="password",
+                                        help="Auto-generated. You can change it.")
+            show_pw = st.checkbox("Show password")
+        if show_pw:
+            st.code(new_user_pw)
+        if st.form_submit_button("➕ Create Account", use_container_width=True):
+            if not new_username or not new_user_pw:
+                st.error("Username and password are required.")
+            elif len(new_user_pw) < 8:
+                st.error("Password must be at least 8 characters.")
+            elif username_exists(new_username.strip().lower()):
+                st.error(f"Username '{new_username}' already exists.")
+            else:
+                create_user(new_username.strip().lower(), new_user_pw, new_role)
+                log_activity("User Created", f"New {new_role} user: {new_username}")
+                st.success(f"Account created for **{new_username}**!")
+                st.warning("Share these credentials securely (shown once only):")
+                st.code(f"Username: {new_username.strip().lower()}\nPassword: {new_user_pw}\nRole: {new_role}")
+
+    st.markdown("---")
+    st.markdown("""
+    <div class="section-box">
+        <strong>How accounts work:</strong><br>
+        <strong>Coordinator / NHH / CDFA</strong> — Created here. They log in on the main sign-in page.<br>
+        <strong>Facilitator / Host</strong> — Created automatically when you add a new host or facilitator
+        on their respective pages. They also get a separate Portal login via Portal Access.<br>
+    </div>
+    """, unsafe_allow_html=True)
 
 with tab_email:
     st.markdown("### Gmail Setup — Step by Step")
