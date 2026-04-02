@@ -1022,6 +1022,4 @@ def get_mileage_total_pending():
 try:
     import streamlit as _st
     if _st.secrets.get("DATABASE_URL"):
-        from utils.supabase_db import *  # noqa: F401,F403
-except Exception:
-    pass
+    from utils.supabase_db import *
