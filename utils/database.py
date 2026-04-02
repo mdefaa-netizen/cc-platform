@@ -1022,4 +1022,10 @@ def get_mileage_total_pending():
 try:
     import streamlit as _st
     if _st.secrets.get("DATABASE_URL"):
-        from utils.supabase_db import *
+        import utils.supabase_db as _pg
+        import inspect as _inspect
+        for _name, _obj in _inspect.getmembers(_pg):
+            if not _name.startswith("_") and callable(_obj):
+                globals()[_name] = _obj
+except Exception:
+    pass
