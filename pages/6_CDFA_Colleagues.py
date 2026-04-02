@@ -14,11 +14,10 @@ try:
 except ImportError:
     init_db()
 
-role = st.session_state.get("user_role", None)
-
-if role is None:
+if not st.session_state.get("authenticated"):
     st.warning("Please log in.")
     st.stop()
+role = st.session_state.get("user_role", None)
 
 if role != "coordinator":
     st.error("This page is only accessible to the Coordinator.")
@@ -81,7 +80,6 @@ with tab_add:
                 add_cdfa({"name": name, "title": title, "email": email,
                            "phone": phone, "role": role, "notes": notes})
                 st.success(f"✅ '{name}' added to CDFA Colleagues!")
-                time.sleep(3)
                 st.rerun()
 
 with tab_edit:
@@ -111,11 +109,21 @@ with tab_edit:
             if save:
                 update_cdfa(sel, {"name": name, "title": title, "email": email,
                                    "phone": phone, "role": role, "notes": notes})
-                st.success("✅ Colleague updated!")
-                time.sleep(3)
+                st.success("Colleague updated!")
                 st.rerun()
             if delb:
-                delete_cdfa(sel)
-                st.success("🗑️ Deleted.")
-                time.sleep(3)
-                st.rerun()
+                st.session_state["_confirm_delete_cdfa"] = sel
+
+        if st.session_state.get("_confirm_delete_cdfa") == sel:
+            st.warning("Are you sure you want to delete this colleague?")
+            c_yes, c_no = st.columns(2)
+            with c_yes:
+                if st.button("Yes, delete", key="confirm_del_cdfa"):
+                    delete_cdfa(sel)
+                    st.session_state.pop("_confirm_delete_cdfa", None)
+                    st.success("Deleted.")
+                    st.rerun()
+            with c_no:
+                if st.button("Cancel", key="cancel_del_cdfa"):
+                    st.session_state.pop("_confirm_delete_cdfa", None)
+                    st.rerun()

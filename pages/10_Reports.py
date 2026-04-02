@@ -19,12 +19,11 @@ try:
 except ImportError:
     init_db()
 
-role = st.session_state.get("user_role", None)
-linked_id = st.session_state.get("linked_id", None)
-
-if role is None:
+if not st.session_state.get("authenticated"):
     st.warning("Please log in.")
     st.stop()
+role = st.session_state.get("user_role", None)
+linked_id = st.session_state.get("linked_id", None)
 
 if role not in ("coordinator", "cdfa", "nhh"):
     st.error("You do not have access to this page.")

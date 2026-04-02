@@ -7,47 +7,73 @@ Activated automatically when DATABASE_URL is present in st.secrets.
 
 import psycopg2
 import psycopg2.extras
+import psycopg2.pool
 import streamlit as st
 from datetime import datetime, date, timedelta
-import hashlib, os, secrets, string
+import hashlib, hmac, os, secrets, string
 
 DB_PATH = "supabase"  # Sentinel so any code that prints DB_PATH still works
 
+_pool = None
+
+def _get_pool():
+    global _pool
+    if _pool is None:
+        _pool = psycopg2.pool.SimpleConnectionPool(
+            minconn=1, maxconn=10,
+            dsn=st.secrets["DATABASE_URL"]
+        )
+    return _pool
 
 def get_connection():
-    conn = psycopg2.connect(st.secrets["DATABASE_URL"])
-    return conn
+    return _get_pool().getconn()
 
+
+def _putconn(conn):
+    """Return a connection to the pool."""
+    try:
+        _get_pool().putconn(conn)
+    except Exception:
+        try:
+            _putconn(conn)
+        except Exception:
+            pass
 
 def _fetchall(conn, query, params=None):
-    """Execute a SELECT and return list[dict], then close the connection."""
-    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-        cur.execute(query, params or ())
-        rows = cur.fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
+    """Execute a SELECT and return list[dict], then return conn to pool."""
+    try:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(query, params or ())
+            rows = cur.fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        _putconn(conn)
 
 
 def _fetchone(conn, query, params=None):
-    """Execute a SELECT and return a single dict or None, then close."""
-    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-        cur.execute(query, params or ())
-        row = cur.fetchone()
-    conn.close()
-    return dict(row) if row else None
+    """Execute a SELECT and return a single dict or None, then return conn."""
+    try:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(query, params or ())
+            row = cur.fetchone()
+        return dict(row) if row else None
+    finally:
+        _putconn(conn)
 
 
 def _execute(conn, query, params=None):
-    """Execute a write statement, commit, and close."""
-    with conn.cursor() as cur:
-        cur.execute(query, params or ())
-    conn.commit()
-    conn.close()
+    """Execute a write statement, commit, and return conn to pool."""
+    try:
+        with conn.cursor() as cur:
+            cur.execute(query, params or ())
+        conn.commit()
+    finally:
+        _putconn(conn)
 
 
 # ── Password Hashing ─────────────────────────────────────────────────────────
 
-_PBKDF2_ITERATIONS = 100_000
+_PBKDF2_ITERATIONS = 600_000
 
 def hash_password(password: str) -> str:
     salt = os.urandom(16)
@@ -59,10 +85,10 @@ def verify_password(password: str, stored_hash: str) -> bool:
     try:
         salt_hex, dk_hex = stored_hash.split(":")
         salt = bytes.fromhex(salt_hex)
-        # Try current iteration count first, then legacy 260K
-        for iters in (_PBKDF2_ITERATIONS, 260_000):
+        # Try current iteration count first, then legacy counts
+        for iters in (_PBKDF2_ITERATIONS, 260_000, 100_000):
             dk = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, iters)
-            if dk.hex() == dk_hex:
+            if hmac.compare_digest(dk.hex(), dk_hex):
                 return True
         return False
     except Exception:
@@ -167,7 +193,7 @@ def init_all():
         cur.execute("""CREATE TABLE IF NOT EXISTS portal_access (
             access_id SERIAL PRIMARY KEY, person_type TEXT NOT NULL,
             person_id INTEGER NOT NULL, username TEXT UNIQUE NOT NULL,
-            password TEXT NOT NULL, is_active INTEGER DEFAULT 0,
+            password_hash TEXT NOT NULL, is_active INTEGER DEFAULT 0,
             granted_by TEXT DEFAULT 'Coordinator', granted_at TIMESTAMP,
             notes TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
         # activity_log
@@ -201,12 +227,20 @@ def init_all():
         # Seed default users if table is empty
         cur.execute("SELECT COUNT(*) FROM users")
         if cur.fetchone()[0] == 0:
-            for uname, pwd, r in [("coordinator","nhhumanities2025","coordinator"),
-                                   ("nhh","nhh2025","nhh"),("cdfa","cdfa2025","cdfa")]:
+            import string as _s
+            _chars = _s.ascii_letters + _s.digits
+            _gen = lambda: ''.join(__import__('secrets').choice(_chars) for _ in range(16))
+            for uname, pwd, r in [("coordinator", _gen(), "coordinator"),
+                                   ("nhh", _gen(), "nhh"), ("cdfa", _gen(), "cdfa")]:
                 cur.execute("INSERT INTO users (username,password_hash,role) VALUES (%s,%s,%s)",
                             (uname, hash_password(pwd), r))
+            import logging
+            logging.warning(
+                "Default users seeded with random passwords. "
+                "Set passwords via the database or redeploy with pre-configured users."
+            )
     conn.commit()
-    conn.close()
+    _putconn(conn)
     _schema_initialised = True
 
 
@@ -356,7 +390,7 @@ def init_db():
             )
         """)
     conn.commit()
-    conn.close()
+    _putconn(conn)
 
 
 def init_users():
@@ -377,17 +411,25 @@ def init_users():
         # Seed default users if table is empty
         cur.execute("SELECT COUNT(*) FROM users")
         if cur.fetchone()[0] == 0:
+            import string as _s
+            _chars = _s.ascii_letters + _s.digits
+            _gen = lambda: ''.join(__import__('secrets').choice(_chars) for _ in range(16))
             defaults = [
-                ("coordinator", "nhhumanities2025", "coordinator"),
-                ("nhh",         "nhh2025",          "nhh"),
-                ("cdfa",        "cdfa2025",         "cdfa"),
+                ("coordinator", _gen(), "coordinator"),
+                ("nhh",         _gen(), "nhh"),
+                ("cdfa",        _gen(), "cdfa"),
             ]
             for uname, pwd, role in defaults:
                 cur.execute(
                     "INSERT INTO users (username, password_hash, role) VALUES (%s,%s,%s)",
                     (uname, hash_password(pwd), role))
+            import logging
+            logging.warning(
+                "Default users seeded with random passwords. "
+                "Set passwords via the database or redeploy with pre-configured users."
+            )
     conn.commit()
-    conn.close()
+    _putconn(conn)
 
 
 def get_user_by_username(username):
@@ -431,7 +473,7 @@ def init_mileage():
             )
         """)
     conn.commit()
-    conn.close()
+    _putconn(conn)
 
 
 def init_portal_access():
@@ -445,7 +487,7 @@ def init_portal_access():
                 person_type TEXT NOT NULL,
                 person_id   INTEGER NOT NULL,
                 username    TEXT UNIQUE NOT NULL,
-                password    TEXT NOT NULL,
+                password_hash TEXT NOT NULL,
                 is_active   INTEGER DEFAULT 0,
                 granted_by  TEXT DEFAULT 'Coordinator',
                 granted_at  TIMESTAMP,
@@ -454,7 +496,7 @@ def init_portal_access():
             )
         """)
     conn.commit()
-    conn.close()
+    _putconn(conn)
 
 
 def init_activity_log():
@@ -472,7 +514,7 @@ def init_activity_log():
             )
         """)
     conn.commit()
-    conn.close()
+    _putconn(conn)
 
 
 def init_messages():
@@ -497,7 +539,7 @@ def init_messages():
             )
         """)
     conn.commit()
-    conn.close()
+    _putconn(conn)
 
 
 def _ensure_notifications():
@@ -516,7 +558,7 @@ def _ensure_notifications():
             )
         """)
     conn.commit()
-    conn.close()
+    _putconn(conn)
 
 
 # ── Hosts ─────────────────────────────────────────────────────────────────────
@@ -736,7 +778,7 @@ def add_event(data, facilitator_ids=None):
                     "INSERT INTO event_facilitators (event_id,facilitator_id) VALUES (%s,%s)",
                     (event_id, fid))
     conn.commit()
-    conn.close()
+    _putconn(conn)
     return event_id
 
 
@@ -760,7 +802,7 @@ def update_event(event_id, data, facilitator_ids=None):
                     "INSERT INTO event_facilitators (event_id,facilitator_id) VALUES (%s,%s)",
                     (event_id, fid))
     conn.commit()
-    conn.close()
+    _putconn(conn)
 
 
 def delete_event(event_id):
@@ -769,7 +811,7 @@ def delete_event(event_id):
         cur.execute("DELETE FROM event_facilitators WHERE event_id=%s", (event_id,))
         cur.execute("DELETE FROM events WHERE event_id=%s", (event_id,))
     conn.commit()
-    conn.close()
+    _putconn(conn)
 
 
 def get_event_facilitators(event_id):
@@ -951,7 +993,7 @@ def get_dashboard_stats():
             WHERE due_date < CURRENT_DATE AND status NOT IN ('Completed')
         """)
         stats["overdue_tasks"] = cur.fetchone()[0]
-    conn.close()
+    _putconn(conn)
     return stats
 
 
@@ -974,7 +1016,7 @@ def log_activity(action: str, details: str, user: str = "Coordinator"):
             'INSERT INTO activity_log (action, details, "user") VALUES (%s,%s,%s)',
             (action, details, user))
     conn.commit()
-    conn.close()
+    _putconn(conn)
 
 
 def get_activity_log(limit=50):
@@ -984,7 +1026,7 @@ def get_activity_log(limit=50):
             SELECT * FROM activity_log ORDER BY logged_at DESC LIMIT %s
         """, (limit,))
     except Exception:
-        conn.close()
+        _putconn(conn)
         return []
 
 
@@ -1009,7 +1051,7 @@ def get_notifications(role="all", unread_only=False):
         q += " ORDER BY created_at DESC LIMIT 30"
         return _fetchall(conn, q, params)
     except Exception:
-        conn.close()
+        _putconn(conn)
         return []
 
 
@@ -1022,7 +1064,7 @@ def mark_notifications_read(role="all"):
             WHERE target_role=%s OR target_role='all'
         """, (role,))
     except Exception:
-        conn.close()
+        _putconn(conn)
 
 
 def get_unread_count(role="all"):
@@ -1035,10 +1077,10 @@ def get_unread_count(role="all"):
                 WHERE (target_role=%s OR target_role='all') AND is_read=0
             """, (role,))
             count = cur.fetchone()[0]
-        conn.close()
+        _putconn(conn)
         return count
     except Exception:
-        conn.close()
+        _putconn(conn)
         return 0
 
 
@@ -1054,10 +1096,10 @@ def add_portal_access(data):
     init_portal_access()
     conn = get_connection()
     _execute(conn, """
-        INSERT INTO portal_access (person_type,person_id,username,password,is_active,notes)
+        INSERT INTO portal_access (person_type,person_id,username,password_hash,is_active,notes)
         VALUES (%s,%s,%s,%s,%s,%s)
     """, (data['person_type'], data['person_id'], data['username'],
-          data['password'], data.get('is_active', 0), data.get('notes', '')))
+          hash_password(data['password']), data.get('is_active', 0), data.get('notes', '')))
 
 
 def update_portal_access(access_id, is_active):
@@ -1078,15 +1120,18 @@ def delete_portal_access(access_id):
 def check_portal_login(username, password):
     init_portal_access()
     conn = get_connection()
-    return _fetchone(conn, """
+    row = _fetchone(conn, """
         SELECT pa.*,
                CASE WHEN pa.person_type='host' THEN h.name ELSE f.name END as person_name,
                CASE WHEN pa.person_type='host' THEN h.email ELSE f.email END as person_email
         FROM portal_access pa
         LEFT JOIN hosts h ON pa.person_type='host' AND pa.person_id=h.host_id
         LEFT JOIN facilitators f ON pa.person_type='facilitator' AND pa.person_id=f.facilitator_id
-        WHERE pa.username=%s AND pa.password=%s AND pa.is_active=1
-    """, (username, password))
+        WHERE pa.username=%s AND pa.is_active=1
+    """, (username,))
+    if row and verify_password(password, row.get("password_hash", "")):
+        return row
+    return None
 
 
 # ── Messages ──────────────────────────────────────────────────────────────────
@@ -1155,7 +1200,7 @@ def get_unread_message_count():
         cur.execute(
             "SELECT COUNT(*) FROM messages WHERE is_read=0 AND sender_type != 'coordinator'")
         count = cur.fetchone()[0]
-    conn.close()
+    _putconn(conn)
     return count
 
 
@@ -1214,5 +1259,5 @@ def get_mileage_total_pending():
             FROM mileage_reimbursements WHERE status='Pending'
         """)
         val = cur.fetchone()[0]
-    conn.close()
+    _putconn(conn)
     return val

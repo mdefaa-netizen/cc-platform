@@ -1,4 +1,5 @@
 import streamlit as st
+from html import escape as _esc
 
 PALETTE = {
     "navy":    "#1B2A4A",
@@ -232,17 +233,18 @@ def top_nav():
 
 def page_header(title, subtitle=None):
     top_nav()
-    st.markdown(f'<span class="program-title">{PROGRAM_TITLE}</span>', unsafe_allow_html=True)
-    st.markdown(f"<h1>{title}</h1>", unsafe_allow_html=True)
+    st.markdown(f'<span class="program-title">{_esc(PROGRAM_TITLE)}</span>', unsafe_allow_html=True)
+    st.markdown(f"<h1>{_esc(title)}</h1>", unsafe_allow_html=True)
     if subtitle:
-        st.markdown(f'<span class="page-subtitle">{subtitle}</span>', unsafe_allow_html=True)
+        st.markdown(f'<span class="page-subtitle">{_esc(subtitle)}</span>', unsafe_allow_html=True)
 
 def kpi_card(label, value, sub="", color="teal"):
+    safe_color = _esc(str(color))
     st.markdown(f"""
-    <div class="kpi-card {color}">
-        <div class="kpi-label">{label}</div>
-        <div class="kpi-value">{value}</div>
-        {"<div class='kpi-sub'>" + sub + "</div>" if sub else ""}
+    <div class="kpi-card {safe_color}">
+        <div class="kpi-label">{_esc(str(label))}</div>
+        <div class="kpi-value">{_esc(str(value))}</div>
+        {"<div class='kpi-sub'>" + _esc(str(sub)) + "</div>" if sub else ""}
     </div>
     """, unsafe_allow_html=True)
 

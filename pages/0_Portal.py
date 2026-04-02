@@ -10,6 +10,7 @@ from utils.database import (
     check_portal_login, add_notification
 )
 from utils.styles import inject_css
+from html import escape as _esc
 
 st.set_page_config(page_title="My Portal · Community Conversations",
                    page_icon="🗺️", layout="wide")
@@ -97,7 +98,7 @@ with st.sidebar:
         <div style='font-family:Playfair Display,serif;font-size:1rem;font-weight:700;
         color:white'>My Event Portal</div>
         <div style='font-size:0.75rem;color:#aab;margin-top:0.3rem'>
-            {person_name}<br>{person_type_label}
+            {_esc(person_name)}<br>{_esc(person_type_label)}
         </div>
     </div>
     <hr style='border-color:#ffffff22'>
@@ -110,8 +111,8 @@ with st.sidebar:
 # Header
 st.markdown(f"""
 <span class="program-title">NH Humanities & CDFA · Community Conversations</span>
-<h1>Welcome, {person_name}</h1>
-<span class="page-subtitle">Your event portal · {person_type_label}</span>
+<h1>Welcome, {_esc(person_name)}</h1>
+<span class="page-subtitle">Your event portal · {_esc(person_type_label)}</span>
 """, unsafe_allow_html=True)
 
 # Notifications for this host/facilitator
@@ -124,7 +125,7 @@ if notifs:
         st.markdown(f"""
         <div style='background:#FEF9E7;border-left:4px solid #C8963E;padding:0.7rem 1rem;
         border-radius:0 8px 8px 0;margin-bottom:0.5rem;font-size:0.9rem'>
-            🔔 {n.get('message','')} <span style='color:#aaa;font-size:0.78rem'> · {ts}</span>
+            🔔 {_esc(n.get('message',''))} <span style='color:#aaa;font-size:0.78rem'> · {_esc(ts)}</span>
         </div>""", unsafe_allow_html=True)
     if st.button("✅ Mark all read"):
         mark_notifications_read(portal_role)
@@ -159,16 +160,16 @@ with tab_cal:
             <div class="section-box" style='margin-bottom:0.8rem'>
                 <div style='display:flex;justify-content:space-between;align-items:flex-start'>
                     <div>
-                        <strong style='font-size:1.1rem'>{e['event_name']}</strong>
-                        <span style='color:{status_color};margin-left:0.5rem'>{badge} {e.get('status','')}</span>
+                        <strong style='font-size:1.1rem'>{_esc(e['event_name'])}</strong>
+                        <span style='color:{status_color};margin-left:0.5rem'>{badge} {_esc(e.get('status',''))}</span>
                     </div>
                     <div style='text-align:right;color:#2A7F7F;font-weight:600'>
-                        {e.get('event_date','')}
-                        {(' · '+e['event_time']) if e.get('event_time') else ''}
+                        {_esc(str(e.get('event_date','')))}
+                        {(' · '+_esc(e['event_time'])) if e.get('event_time') else ''}
                     </div>
                 </div>
                 <div style='margin-top:0.4rem;font-size:0.9rem;color:#555'>
-                    📍 {e.get('venue_address','') or e.get('city','')+', NH'}
+                    📍 {_esc(e.get('venue_address','') or e.get('city','')+', NH')}
                 </div>
                 {f"<div style='margin-top:0.3rem;font-size:0.85rem;color:#7F8C8D'>Attendance: {e.get('attendance_count') or 'Not yet recorded'} {'✅' if e.get('attendance_confirmed') else ''}</div>" if e.get('status')=='Completed' else ''}
             </div>

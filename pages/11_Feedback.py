@@ -14,11 +14,10 @@ try:
 except ImportError:
     init_db()
 
-role = st.session_state.get("user_role", None)
-
-if role is None:
+if not st.session_state.get("authenticated"):
     st.warning("Please log in.")
     st.stop()
+role = st.session_state.get("user_role", None)
 
 _role = role
 _is_coord = (_role == "coordinator")
@@ -54,7 +53,6 @@ with tab_add:
                 add_feedback({"event_id":ev_sel,"participant_name":pname or None,
                                "feedback_text":text,"rating":rating})
                 st.success("✅ Feedback recorded!")
-                time.sleep(3)
                 st.rerun()
 
 with tab_view:

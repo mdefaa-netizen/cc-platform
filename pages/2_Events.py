@@ -18,6 +18,9 @@ try:
 except ImportError:
     init_db()
 
+if not st.session_state.get("authenticated"):
+    st.warning("Please log in.")
+    st.stop()
 role = st.session_state.get("user_role", None)
 linked_id = st.session_state.get("linked_id", None)
 
@@ -237,11 +240,23 @@ if _is_coord and tab_edit:
                     st.session_state.pop("edit_event_id", None)
 
                 if delete:
-                    delete_event(sel_edit)
-                    log_activity("Event Deleted", f"{ev.get('event_name','')}")
-                    add_notification(f"Event cancelled: {ev.get('event_name','')}", "all")
-                    st.success("🗑️ Event deleted.")
-                    st.rerun()
+                    st.session_state["_confirm_delete_event"] = sel_edit
+
+            if st.session_state.get("_confirm_delete_event") == sel_edit:
+                st.warning(f"Are you sure you want to delete '{ev.get('event_name','')}'? This cannot be undone.")
+                c_yes, c_no = st.columns(2)
+                with c_yes:
+                    if st.button("Yes, delete event", key="confirm_del_event"):
+                        delete_event(sel_edit)
+                        log_activity("Event Deleted", f"{ev.get('event_name','')}")
+                        add_notification(f"Event cancelled: {ev.get('event_name','')}", "all")
+                        st.session_state.pop("_confirm_delete_event", None)
+                        st.success("Event deleted.")
+                        st.rerun()
+                with c_no:
+                    if st.button("Cancel", key="cancel_del_event"):
+                        st.session_state.pop("_confirm_delete_event", None)
+                        st.rerun()
 
 # ── View Details ───────────────────────────────────────────────────────────────
 with tab_view:

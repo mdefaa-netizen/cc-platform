@@ -17,11 +17,10 @@ try:
 except ImportError:
     init_db()
 
-role = st.session_state.get("user_role", None)
-
-if role is None:
+if not st.session_state.get("authenticated"):
     st.warning("Please log in.")
     st.stop()
+role = st.session_state.get("user_role", None)
 
 if role != "coordinator":
     st.error("Task management is only accessible to the Coordinator.")
@@ -171,7 +170,6 @@ with tab_add:
                            "related_event_id": rel_ev or None,
                            "due_date":str(due),"priority":prio,"status":stat,"notes":notes})
                 st.success(f"✅ Task '{title}' created!")
-                time.sleep(3)
                 st.rerun()
 
 with tab_edit:
@@ -199,7 +197,7 @@ with tab_edit:
                     due_val = None
                     if t.get("due_date"):
                         try: due_val = datetime.date.fromisoformat(t["due_date"])
-                        except: pass
+                        except (ValueError, TypeError): pass
                     due   = st.date_input("Due Date", value=due_val or datetime.date.today())
                     prio  = st.selectbox("Priority", ["Medium","Low","High","Urgent"],
                                           index=["Medium","Low","High","Urgent"].index(t.get("priority","Medium")))
@@ -218,11 +216,9 @@ with tab_edit:
                                        "related_event_id": rel_ev or None,
                                        "due_date":str(due),"priority":prio,"status":stat,"notes":notes})
                     st.session_state.pop("edit_task_id",None)
-                    st.success("✅ Task updated!")
-                    time.sleep(3)
+                    st.success("Task updated!")
                     st.rerun()
                 if delb:
                     delete_task(sel)
-                    st.success("🗑️ Task deleted.")
-                    time.sleep(3)
+                    st.success("Task deleted.")
                     st.rerun()

@@ -20,12 +20,11 @@ try:
 except ImportError:
     init_db()
 
-role = st.session_state.get("user_role", None)
-linked_id = st.session_state.get("linked_id", None)
-
-if role is None:
+if not st.session_state.get("authenticated"):
     st.warning("Please log in.")
     st.stop()
+role = st.session_state.get("user_role", None)
+linked_id = st.session_state.get("linked_id", None)
 
 if role != "coordinator":
     st.error("Communications is only accessible to the Coordinator.")
@@ -225,7 +224,6 @@ with tab_send:
                 st.success(f"✅ {success_count} message(s) {action} successfully!")
                 for err in errors:
                     st.warning(f"⚠️ {err}")
-                time.sleep(3)
                 st.rerun()
             for err in errors:
                 st.warning(f"⚠️ {err}")

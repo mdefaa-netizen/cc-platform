@@ -1,6 +1,11 @@
 import streamlit as st
-import sys, os
+import sys, os, time as _time
+from html import escape as _esc
 sys.path.insert(0, os.path.dirname(__file__))
+
+_SESSION_TIMEOUT_SECONDS = 3600  # 1 hour
+_MAX_LOGIN_ATTEMPTS = 5
+_LOCKOUT_SECONDS = 300  # 5 minutes
 
 from utils.database import (init_db, init_mileage, get_dashboard_stats, get_overdue_tasks,
                              get_upcoming_events, get_all_communications,
@@ -42,9 +47,20 @@ def check_password():
         st.session_state.user_label    = None
         st.session_state.username      = None
         st.session_state.linked_id     = None
+        st.session_state._login_at     = None
 
+    # Session timeout check
     if st.session_state.authenticated:
+        if st.session_state.get("_login_at") and (_time.time() - st.session_state._login_at > _SESSION_TIMEOUT_SECONDS):
+            st.session_state.clear()
+            st.warning("Session expired. Please sign in again.")
+            st.rerun()
         return True
+
+    # Rate limiting state
+    if "_login_attempts" not in st.session_state:
+        st.session_state._login_attempts = 0
+        st.session_state._lockout_until  = 0
 
     st.markdown("""
     <div style='max-width:440px;margin:5rem auto;background:white;padding:2.5rem 2rem;
@@ -58,20 +74,36 @@ def check_password():
     </div>
     """, unsafe_allow_html=True)
 
+    # Check lockout
+    locked_out = st.session_state.get("_lockout_until", 0) > _time.time()
+    if locked_out:
+        remaining = int(st.session_state._lockout_until - _time.time())
+        st.error(f"Too many failed attempts. Try again in {remaining} seconds.")
+
     username = st.text_input("Username", placeholder="Enter your username")
     pwd = st.text_input("Password", type="password", placeholder="Enter your password")
-    if st.button("Sign In", use_container_width=True):
+    if st.button("Sign In", use_container_width=True, disabled=locked_out):
+        if locked_out:
+            st.stop()
         if username and pwd:
             user = get_user_by_username(username.strip().lower())
             if user and verify_password(pwd, user["password_hash"]):
-                st.session_state.authenticated = True
-                st.session_state.user_role     = user["role"]
-                st.session_state.user_label    = ROLE_LABELS.get(user["role"], user["role"].title())
-                st.session_state.username      = user["username"]
-                st.session_state.linked_id     = user.get("linked_id")
+                st.session_state.authenticated   = True
+                st.session_state.user_role       = user["role"]
+                st.session_state.user_label      = ROLE_LABELS.get(user["role"], user["role"].title())
+                st.session_state.username        = user["username"]
+                st.session_state.linked_id       = user.get("linked_id")
+                st.session_state._login_at       = _time.time()
+                st.session_state._login_attempts = 0
                 st.rerun()
             else:
-                st.error("Invalid username or password.")
+                st.session_state._login_attempts = st.session_state.get("_login_attempts", 0) + 1
+                if st.session_state._login_attempts >= _MAX_LOGIN_ATTEMPTS:
+                    st.session_state._lockout_until = _time.time() + _LOCKOUT_SECONDS
+                    st.error(f"Too many failed attempts. Locked out for {_LOCKOUT_SECONDS // 60} minutes.")
+                else:
+                    remaining = _MAX_LOGIN_ATTEMPTS - st.session_state._login_attempts
+                    st.error(f"Invalid username or password. {remaining} attempt(s) remaining.")
         else:
             st.error("Please enter both username and password.")
 
@@ -108,7 +140,7 @@ with st.sidebar:
         <div style='font-size:0.7rem;color:#aab;margin-top:0.2rem'>NH Humanities & CDFA</div>
         <div style='margin-top:0.4rem;background:#ffffff22;border-radius:6px;
         padding:3px 8px;font-size:0.72rem;color:#7dd'>
-        Signed in as: <strong>{label}</strong></div>
+        Signed in as: <strong>{_esc(label)}</strong></div>
     </div>
     <hr style='border-color:#ffffff22;margin:0.5rem 0'>
     """, unsafe_allow_html=True)
@@ -163,7 +195,7 @@ if not is_coordinator:
     st.markdown(f"""
     <div style='background:#EBF5FB;border-left:4px solid #2A7F7F;padding:0.8rem 1rem;
     border-radius:0 8px 8px 0;margin-bottom:1rem'>
-        👋 Welcome, <strong>{label}</strong>. You have <strong>read-only</strong> access
+        👋 Welcome, <strong>{_esc(label)}</strong>. You have <strong>read-only</strong> access
         to the Community Conversations coordination platform.
     </div>
     """, unsafe_allow_html=True)
@@ -177,7 +209,7 @@ if notifs:
         st.markdown(f"""
         <div style='background:#FEF9E7;border-left:4px solid #C8963E;padding:0.7rem 1rem;
         border-radius:0 8px 8px 0;margin-bottom:0.5rem;font-size:0.88rem'>
-            🔔 {n.get('message','')} <span style='color:#aaa;font-size:0.78rem'> · {ts}</span>
+            🔔 {_esc(n.get('message',''))} <span style='color:#aaa;font-size:0.78rem'> · {_esc(ts)}</span>
         </div>
         """, unsafe_allow_html=True)
     if st.button("✅ Mark all as read"):
@@ -222,14 +254,14 @@ with col_left:
             st.markdown(f"""
             <div class="section-box" style='margin-bottom:0.6rem;padding:0.8rem 1rem'>
                 <div style='display:flex;justify-content:space-between;align-items:center'>
-                    <div><strong>{ev['event_name']}</strong>
-                    <span style='color:#7F8C8D;font-size:0.85rem'> · {ev.get('city','')}</span></div>
+                    <div><strong>{_esc(ev['event_name'])}</strong>
+                    <span style='color:#7F8C8D;font-size:0.85rem'> · {_esc(ev.get('city',''))}</span></div>
                     <div style='text-align:right;font-size:0.85rem;color:#2A7F7F'>
-                        <strong>{ev['event_date']}</strong>
-                        {(' · '+ev['event_time']) if ev.get('event_time') else ''}</div>
+                        <strong>{_esc(str(ev['event_date']))}</strong>
+                        {(' · '+_esc(ev['event_time'])) if ev.get('event_time') else ''}</div>
                 </div>
                 <div style='font-size:0.82rem;color:#7F8C8D;margin-top:0.2rem'>
-                    Host: {ev.get('host_name','—')}</div>
+                    Host: {_esc(ev.get('host_name','—'))}</div>
             </div>""", unsafe_allow_html=True)
     else:
         st.info("No events scheduled in the next 30 days.")
@@ -241,8 +273,8 @@ with col_right:
         for t in overdue[:5]:
             st.markdown(f"""
             <div class='overdue-card'>
-                <div class='overdue-title'>{t['task_title']}</div>
-                <div class='overdue-meta'>Due: {t.get('due_date','')} · {t.get('priority','')} priority</div>
+                <div class='overdue-title'>{_esc(t['task_title'])}</div>
+                <div class='overdue-meta'>Due: {_esc(str(t.get('due_date','')))} · {_esc(t.get('priority',''))} priority</div>
             </div>""", unsafe_allow_html=True)
     elif not is_coordinator:
         st.info("Task management is available to the Coordinator.")
@@ -273,9 +305,9 @@ if is_coordinator:
             ts = str(m.get("created_at",""))[:16] if m.get("created_at") else ""
             st.markdown(f"""
             <div class="section-box" style='margin-bottom:0.5rem;padding:0.7rem 1rem'>
-                🔴 <strong>{m.get('sender_name','Unknown')}</strong> ({m.get('sender_type','').title()})
-                · {m.get('category','')} · {m.get('subject','')[:40]}
-                <span style='color:#aaa;font-size:0.8rem'> · {ts}</span>
+                🔴 <strong>{_esc(m.get('sender_name','Unknown'))}</strong> ({_esc(m.get('sender_type','').title())})
+                · {_esc(m.get('category',''))} · {_esc(m.get('subject','')[:40])}
+                <span style='color:#aaa;font-size:0.8rem'> · {_esc(ts)}</span>
             </div>""", unsafe_allow_html=True)
         if st.button("📬 View All Messages", use_container_width=False):
             st.switch_page("pages/14_Messages.py")
@@ -303,9 +335,9 @@ with col_act:
                     a.get("action","").split()[0] if a.get("action") else "","🔹")
             st.markdown(f"""
             <div class="feed-item">
-                {icon} <strong>{a.get('action','')}</strong>
-                <div class="feed-date">{ts} · by {user}</div>
-                <div style='font-size:0.8rem;color:#555'>{a.get('details','')}</div>
+                {icon} <strong>{_esc(a.get('action',''))}</strong>
+                <div class="feed-date">{_esc(ts)} · by {_esc(user)}</div>
+                <div style='font-size:0.8rem;color:#555'>{_esc(a.get('details',''))}</div>
             </div>""", unsafe_allow_html=True)
     else:
         st.caption("No activity logged yet. Actions will appear here in real time.")
@@ -317,8 +349,8 @@ with col_comm:
             date_str = str(c.get("sent_date",""))[:10] if c.get("sent_date") else ""
             st.markdown(f"""
             <div class="feed-item">
-                📧 <strong>{c.get('subject','')[:45]}</strong>
-                <div class="feed-date">{date_str} · {c.get('recipient_type','')} · {c.get('communication_type','')}</div>
+                📧 <strong>{_esc(c.get('subject','')[:45])}</strong>
+                <div class="feed-date">{_esc(date_str)} · {_esc(c.get('recipient_type',''))} · {_esc(c.get('communication_type',''))}</div>
             </div>""", unsafe_allow_html=True)
     else:
         st.caption("No communications logged yet.")

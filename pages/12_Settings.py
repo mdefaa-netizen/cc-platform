@@ -15,11 +15,10 @@ try:
 except ImportError:
     init_db()
 
-role = st.session_state.get("user_role", None)
-
-if role is None:
+if not st.session_state.get("authenticated"):
     st.warning("Please log in.")
     st.stop()
+role = st.session_state.get("user_role", None)
 
 if role != "coordinator":
     st.error("Settings is only accessible to the Coordinator.")
@@ -78,7 +77,6 @@ Copy it — you only see it once!
                 try:
                     os.makedirs(os.path.dirname(secrets_path), exist_ok=True)
                     with open(secrets_path, "w") as f:
-                        f.write(f'APP_PASSWORD  = "nhhumanities2025"\n')
                         f.write(f'SMTP_HOST     = "smtp.gmail.com"\n')
                         f.write(f'SMTP_PORT     = "587"\n')
                         f.write(f'SMTP_USER     = "{gmail}"\n')
@@ -123,10 +121,14 @@ with tab_data:
 
     st.markdown("---")
     st.markdown("### Export to CSV")
-    tables = ["hosts","facilitators","nhh_colleagues","cdfa_colleagues",
-              "events","tasks","communications","feedback","reports"]
+    _ALLOWED_TABLES = {"hosts","facilitators","nhh_colleagues","cdfa_colleagues",
+                        "events","tasks","communications","feedback","reports"}
+    tables = sorted(_ALLOWED_TABLES)
     sel_table = st.selectbox("Select table", tables)
     if st.button("⬇️ Export CSV"):
+        if sel_table not in _ALLOWED_TABLES:
+            st.error("Invalid table selection.")
+            st.stop()
         conn = get_connection()
         rows = conn.execute(f"SELECT * FROM {sel_table}").fetchall()
         conn.close()
@@ -144,6 +146,9 @@ with tab_data:
         confirm   = st.text_input("Type CONFIRM")
         if st.button("🗑️ Clear"):
             if confirm == "CONFIRM":
+                if sel_clear not in _ALLOWED_TABLES:
+                    st.error("Invalid table selection.")
+                    st.stop()
                 conn = get_connection()
                 conn.execute(f"DELETE FROM {sel_clear}")
                 conn.commit(); conn.close()

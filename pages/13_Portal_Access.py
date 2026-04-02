@@ -19,11 +19,10 @@ except ImportError:
     init_db()
     init_portal_access()
 
-role = st.session_state.get("user_role", None)
-
-if role is None:
+if not st.session_state.get("authenticated"):
     st.warning("Please log in.")
     st.stop()
+role = st.session_state.get("user_role", None)
 
 if role != "coordinator":
     st.error("This page is only accessible to the Coordinator.")
@@ -108,8 +107,8 @@ with tab_manage:
 with tab_grant:
     st.markdown("### Grant Portal Access")
 
-    def gen_password(length=10):
-        chars = string.ascii_letters + string.digits
+    def gen_password(length=16):
+        chars = string.ascii_letters + string.digits + "!@#$%"
         return ''.join(secrets.choice(chars) for _ in range(length))
 
     with st.form("grant_access_form"):
@@ -154,13 +153,6 @@ with tab_grant:
                     pname = opts.get(person_sel, "")
                     log_activity("Portal Access Created",
                                  f"{pname} (@{username}) — {'Active' if activate else 'Pending'}")
-                    st.success(f"✅ Portal access created for **{pname}**!")
-                    st.markdown(f"""
-                    <div style='background:#D5F5E3;border-radius:8px;padding:1rem;margin-top:0.5rem'>
-                        <strong>Share these credentials with {pname}:</strong><br>
-                        🌐 Platform URL: <code>localhost:8501</code> (or your cloud URL)<br>
-                        👤 Username: <code>{username}</code><br>
-                        🔑 Password: <code>{password}</code><br>
-                        📋 They can: View calendar · Send messages · Record attendance · Submit feedback
-                    </div>
-                    """, unsafe_allow_html=True)
+                    st.success(f"Portal access created for **{pname}**!")
+                    st.warning(f"Share these credentials with {pname} (shown once only):")
+                    st.code(f"Username: {username}\nPassword: {password}")

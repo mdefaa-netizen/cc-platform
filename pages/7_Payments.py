@@ -21,12 +21,11 @@ except ImportError:
     init_db()
     init_mileage()  # Ensure mileage_reimbursements table exists
 
-role = st.session_state.get("user_role", None)
-linked_id = st.session_state.get("linked_id", None)
-
-if role is None:
+if not st.session_state.get("authenticated"):
     st.warning("Please log in.")
     st.stop()
+role = st.session_state.get("user_role", None)
+linked_id = st.session_state.get("linked_id", None)
 
 if role not in ("coordinator", "cdfa", "nhh"):
     st.error("You do not have access to this page.")
@@ -285,7 +284,7 @@ with tab_update:
                 pdate_val = None
                 if f.get("payment_date"):
                     try: pdate_val = datetime.date.fromisoformat(f["payment_date"])
-                    except: pass
+                    except (ValueError, TypeError): pass
                 new_date  = st.date_input("Payment Date", value=pdate_val)
                 new_payto = st.text_input("Check Payable To",
                                            value=f.get("check_payable_to",""))

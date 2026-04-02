@@ -18,6 +18,9 @@ try:
 except ImportError:
     init_db()
 
+if not st.session_state.get("authenticated"):
+    st.warning("Please log in.")
+    st.stop()
 role = st.session_state.get("user_role", None)
 linked_id = st.session_state.get("linked_id", None)
 
@@ -162,23 +165,15 @@ if tab_add:
                             while username_exists(uname):
                                 uname = f"{base_uname}{counter}"[:20]
                                 counter += 1
-                            # Generate password: Hst- + 5 random alphanumeric
-                            chars = _string.ascii_letters + _string.digits
-                            pwd = "Hst-" + "".join(_secrets.choice(chars) for _ in range(5))
+                            chars = _string.ascii_letters + _string.digits + "!@#$%"
+                            pwd = "".join(_secrets.choice(chars) for _ in range(16))
                             create_user(uname, pwd, "host", new_host["host_id"])
-                            st.success("🔑 Login credentials created!")
-                            st.markdown(f"""
-                            <div style='background:#D5F5E3;border-radius:8px;padding:1rem;margin:0.5rem 0'>
-                                <strong>Share these credentials with {name}:</strong><br>
-                                👤 Username: <code>{uname}</code><br>
-                                🔑 Password: <code>{pwd}</code><br>
-                                📋 Role: Host
-                            </div>
-                            """, unsafe_allow_html=True)
+                            st.success("Login credentials created!")
+                            st.warning(f"Share these credentials with {name} (shown once only):")
+                            st.code(f"Username: {uname}\nPassword: {pwd}\nRole: Host")
                     except Exception as e:
                         st.warning(f"Host saved but credential generation failed: {e}")
 
-                    time.sleep(5)
                     st.rerun()
 
 if tab_edit:
@@ -212,7 +207,7 @@ if tab_edit:
             pdate_val = None
             if h.get("payment_date"):
                 try: pdate_val = datetime.date.fromisoformat(h["payment_date"])
-                except: pass
+                except (ValueError, TypeError): pass
             pdate = st.date_input("Payment Date", value=pdate_val)
             notes = st.text_area("Notes", value=h.get("notes",""), height=80)
 
@@ -230,14 +225,24 @@ if tab_edit:
                                    "payment_date":str(pdate) if pdate else None,"notes":notes})
                 log_activity("Host Updated", f"{name} — payment status: {pstatus}")
                 st.session_state.pop("edit_host_id", None)
-                st.success("✅ Host updated!")
-                time.sleep(3)
+                st.success("Host updated!")
                 st.rerun()
             if delb:
-                delete_host(sel)
-                st.success("🗑️ Host deleted.")
-                time.sleep(3)
-                st.rerun()
+                st.session_state["_confirm_delete_host"] = sel
+
+        if st.session_state.get("_confirm_delete_host") == sel:
+            st.warning(f"Are you sure you want to delete this host? This cannot be undone.")
+            c_yes, c_no = st.columns(2)
+            with c_yes:
+                if st.button("Yes, delete", key="confirm_del_host"):
+                    delete_host(sel)
+                    st.session_state.pop("_confirm_delete_host", None)
+                    st.success("Host deleted.")
+                    st.rerun()
+            with c_no:
+                if st.button("Cancel", key="cancel_del_host"):
+                    st.session_state.pop("_confirm_delete_host", None)
+                    st.rerun()
 
         # Host's events
         hevents = get_host_events(sel)

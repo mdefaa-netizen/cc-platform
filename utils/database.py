@@ -1,6 +1,7 @@
 import sqlite3
 import os
 import hashlib
+import hmac
 import secrets
 import string
 from datetime import datetime
@@ -12,6 +13,17 @@ def get_connection():
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
+
+from contextlib import contextmanager
+
+@contextmanager
+def _safe_conn():
+    """Context manager that guarantees connection is closed."""
+    conn = get_connection()
+    try:
+        yield conn
+    finally:
+        conn.close()
 
 def init_db():
     conn = get_connection()
@@ -143,7 +155,7 @@ def init_db():
 
 # ── Password Hashing ─────────────────────────────────────────────────────────
 
-_PBKDF2_ITERATIONS = 100_000
+_PBKDF2_ITERATIONS = 600_000
 
 def hash_password(password: str) -> str:
     salt = os.urandom(16)
@@ -154,10 +166,10 @@ def verify_password(password: str, stored_hash: str) -> bool:
     try:
         salt_hex, dk_hex = stored_hash.split(":")
         salt = bytes.fromhex(salt_hex)
-        # Try current iteration count first, then legacy 260K
-        for iters in (_PBKDF2_ITERATIONS, 260_000):
+        # Try current iteration count first, then legacy counts
+        for iters in (_PBKDF2_ITERATIONS, 260_000, 100_000):
             dk = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, iters)
-            if dk.hex() == dk_hex:
+            if hmac.compare_digest(dk.hex(), dk_hex):
                 return True
         return False
     except Exception:
@@ -180,37 +192,41 @@ def init_users():
     # Seed default users if table is empty
     count = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
     if count == 0:
+        _chars = string.ascii_letters + string.digits
+        _gen = lambda: ''.join(secrets.choice(_chars) for _ in range(16))
         defaults = [
-            ("coordinator", "nhhumanities2025", "coordinator"),
-            ("nhh",         "nhh2025",          "nhh"),
-            ("cdfa",        "cdfa2025",         "cdfa"),
+            ("coordinator", _gen(), "coordinator"),
+            ("nhh",         _gen(), "nhh"),
+            ("cdfa",        _gen(), "cdfa"),
         ]
         for uname, pwd, role in defaults:
             conn.execute(
                 "INSERT INTO users (username, password_hash, role) VALUES (?,?,?)",
                 (uname, hash_password(pwd), role))
+        import logging
+        logging.warning(
+            "Default users seeded with random passwords. "
+            "Set passwords via the database or redeploy with pre-configured users."
+        )
     conn.commit()
     conn.close()
 
 def get_user_by_username(username):
-    conn = get_connection()
-    row = conn.execute("SELECT * FROM users WHERE username=?", (username,)).fetchone()
-    conn.close()
-    return dict(row) if row else None
+    with _safe_conn() as conn:
+        row = conn.execute("SELECT * FROM users WHERE username=?", (username,)).fetchone()
+        return dict(row) if row else None
 
 def create_user(username, password, role, linked_id=None):
-    conn = get_connection()
-    conn.execute(
-        "INSERT INTO users (username, password_hash, role, linked_id) VALUES (?,?,?,?)",
-        (username, hash_password(password), role, linked_id))
-    conn.commit()
-    conn.close()
+    with _safe_conn() as conn:
+        conn.execute(
+            "INSERT INTO users (username, password_hash, role, linked_id) VALUES (?,?,?,?)",
+            (username, hash_password(password), role, linked_id))
+        conn.commit()
 
 def username_exists(username):
-    conn = get_connection()
-    row = conn.execute("SELECT user_id FROM users WHERE username=?", (username,)).fetchone()
-    conn.close()
-    return row is not None
+    with _safe_conn() as conn:
+        row = conn.execute("SELECT user_id FROM users WHERE username=?", (username,)).fetchone()
+        return row is not None
 
 # ── Hosts ──────────────────────────────────────────────────────────────────────
 
@@ -801,7 +817,7 @@ def init_portal_access():
             person_type TEXT NOT NULL,  -- 'host' or 'facilitator'
             person_id   INTEGER NOT NULL,
             username    TEXT UNIQUE NOT NULL,
-            password    TEXT NOT NULL,
+            password_hash TEXT NOT NULL,
             is_active   INTEGER DEFAULT 0,  -- 0=pending, 1=approved
             granted_by  TEXT DEFAULT 'Coordinator',
             granted_at  TIMESTAMP,
@@ -819,14 +835,14 @@ def get_all_portal_access():
     return [dict(r) for r in rows]
 
 def add_portal_access(data):
-    conn = get_connection()
     init_portal_access()
-    conn.execute("""
-        INSERT INTO portal_access (person_type,person_id,username,password,is_active,notes)
-        VALUES (?,?,?,?,?,?)
-    """, (data['person_type'], data['person_id'], data['username'],
-          data['password'], data.get('is_active', 0), data.get('notes','')))
-    conn.commit(); conn.close()
+    with _safe_conn() as conn:
+        conn.execute("""
+            INSERT INTO portal_access (person_type,person_id,username,password_hash,is_active,notes)
+            VALUES (?,?,?,?,?,?)
+        """, (data['person_type'], data['person_id'], data['username'],
+              hash_password(data['password']), data.get('is_active', 0), data.get('notes','')))
+        conn.commit()
 
 def update_portal_access(access_id, is_active):
     conn = get_connection()
@@ -846,19 +862,20 @@ def delete_portal_access(access_id):
 
 def check_portal_login(username, password):
     """Returns portal user info if credentials match and access is active."""
-    conn = get_connection()
     init_portal_access()
-    row = conn.execute("""
-        SELECT pa.*, 
-               CASE WHEN pa.person_type='host' THEN h.name ELSE f.name END as person_name,
-               CASE WHEN pa.person_type='host' THEN h.email ELSE f.email END as person_email
-        FROM portal_access pa
-        LEFT JOIN hosts h ON pa.person_type='host' AND pa.person_id=h.host_id
-        LEFT JOIN facilitators f ON pa.person_type='facilitator' AND pa.person_id=f.facilitator_id
-        WHERE pa.username=? AND pa.password=? AND pa.is_active=1
-    """, (username, password)).fetchone()
-    conn.close()
-    return dict(row) if row else None
+    with _safe_conn() as conn:
+        row = conn.execute("""
+            SELECT pa.*,
+                   CASE WHEN pa.person_type='host' THEN h.name ELSE f.name END as person_name,
+                   CASE WHEN pa.person_type='host' THEN h.email ELSE f.email END as person_email
+            FROM portal_access pa
+            LEFT JOIN hosts h ON pa.person_type='host' AND pa.person_id=h.host_id
+            LEFT JOIN facilitators f ON pa.person_type='facilitator' AND pa.person_id=f.facilitator_id
+            WHERE pa.username=? AND pa.is_active=1
+        """, (username,)).fetchone()
+        if row and verify_password(password, dict(row).get("password_hash", "")):
+            return dict(row)
+        return None
 
 # ── Messages (Host/Facilitator → Coordinator) ──────────────────────────────────
 
@@ -1027,5 +1044,6 @@ try:
         for _name, _obj in _inspect.getmembers(_pg):
             if not _name.startswith("_") and callable(_obj):
                 globals()[_name] = _obj
-except Exception:
-    pass
+except Exception as _e:
+    import logging as _logging
+    _logging.warning("Supabase override failed, falling back to SQLite: %s", _e)
