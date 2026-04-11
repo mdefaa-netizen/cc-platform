@@ -176,38 +176,90 @@ def init_db():
     """)
     conn.commit()
     conn.close()
+    # Run the users-table migration on every startup so legacy username-based
+    # SQLite databases get an email column and the bootstrap coordinator row
+    # becomes reachable by the new email-based login flow.
+    init_users()
 
 # ── Users (RBAC) ──────────────────────────────────────────────────────────────
 # Password hashing lives in utils/auth.py (bcrypt). This module only stores and
 # retrieves the hash string. Schema: email-based, role-checked, activation flag.
 
+BOOTSTRAP_COORDINATOR_EMAIL = "mdefaa@gmail.com"
+
+
 def init_users():
-    """Create the users table if missing. Wipes the old username-based schema
-    if it still exists. Does NOT seed — that is done by
+    """Ensure the users table has the email-based schema.
+
+    If the legacy username-based table exists, migrate it in place:
+    add the missing columns (email, full_name, is_active), copy username
+    into email for existing rows, and force the bootstrap coordinator row
+    to email=mdefaa@gmail.com so the new login page can find it.
+
+    Does NOT seed new users — that is done by
     utils.auth.ensure_bootstrap_coordinator().
     """
     conn = get_connection()
-    # Drop the legacy username-based table if present.
-    row = conn.execute(
-        "SELECT sql FROM sqlite_master WHERE type='table' AND name='users'"
-    ).fetchone()
-    if row and "username" in (row[0] or ""):
-        conn.execute("DROP TABLE IF EXISTS users")
-    conn.executescript("""
-        CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            email TEXT UNIQUE NOT NULL,
-            password_hash TEXT NOT NULL,
-            role TEXT NOT NULL CHECK (role IN (
-                'coordinator','facilitator','host','cdfa_staff','nhh_staff'
-            )),
-            full_name TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            is_active INTEGER NOT NULL DEFAULT 1
-        );
-        CREATE INDEX IF NOT EXISTS idx_users_email ON users (email);
-        CREATE INDEX IF NOT EXISTS idx_users_role  ON users (role);
-    """)
+
+    table_exists = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='users'"
+    ).fetchone() is not None
+
+    if not table_exists:
+        conn.executescript("""
+            CREATE TABLE users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                email TEXT UNIQUE NOT NULL,
+                password_hash TEXT NOT NULL,
+                role TEXT NOT NULL CHECK (role IN (
+                    'coordinator','facilitator','host','cdfa_staff','nhh_staff'
+                )),
+                full_name TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                is_active INTEGER NOT NULL DEFAULT 1
+            );
+            CREATE INDEX IF NOT EXISTS idx_users_email ON users (email);
+            CREATE INDEX IF NOT EXISTS idx_users_role  ON users (role);
+        """)
+    else:
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(users)").fetchall()]
+
+        if "email" not in cols:
+            conn.execute("ALTER TABLE users ADD COLUMN email TEXT")
+            if "username" in cols:
+                conn.execute(
+                    "UPDATE users SET email = username "
+                    "WHERE email IS NULL OR email = ''"
+                )
+
+        if "full_name" not in cols:
+            try:
+                conn.execute("ALTER TABLE users ADD COLUMN full_name TEXT")
+            except sqlite3.OperationalError:
+                pass
+
+        if "is_active" not in cols:
+            try:
+                conn.execute(
+                    "ALTER TABLE users ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1"
+                )
+            except sqlite3.OperationalError:
+                pass
+
+        # Force the first coordinator row to the bootstrap email so the
+        # new email-based login can find it.
+        conn.execute(
+            "UPDATE users SET email = ? "
+            "WHERE rowid = (SELECT MIN(rowid) FROM users WHERE role = 'coordinator')",
+            (BOOTSTRAP_COORDINATOR_EMAIL,),
+        )
+
+        try:
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_users_email ON users (email)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_users_role  ON users (role)")
+        except sqlite3.OperationalError:
+            pass
+
     # Add owner_user_id to events if it's missing (for existing DBs created
     # before this migration). SQLite: ALTER TABLE ADD COLUMN is idempotent
     # only if we check first.
