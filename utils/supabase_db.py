@@ -2,7 +2,7 @@
 PostgreSQL backend for Supabase deployment.
 Mirrors every public function in database.py but uses psycopg2.
 
-Activated automatically when DATABASE_URL is present in st.secrets.
+Activated automatically when DATABASE_URL is present in st.secrets or os.environ.
 """
 
 import psycopg2
@@ -42,12 +42,26 @@ DB_PATH = "supabase"  # Sentinel so any code that prints DB_PATH still works
 
 _pool = None
 
+def _get_database_url():
+    try:
+        url = st.secrets.get("DATABASE_URL")
+        if url:
+            return url
+    except Exception:
+        pass
+    url = os.environ.get("DATABASE_URL")
+    if not url:
+        raise RuntimeError(
+            "DATABASE_URL not found in st.secrets or environment variables"
+        )
+    return url
+
 def _get_pool():
     global _pool
     if _pool is None:
         _pool = psycopg2.pool.SimpleConnectionPool(
             minconn=1, maxconn=10,
-            dsn=st.secrets["DATABASE_URL"]
+            dsn=_get_database_url()
         )
     return _pool
 

@@ -40,11 +40,14 @@ _log = logging.getLogger(__name__)
 def _backend():
     """Return the active DB module: supabase_db if DATABASE_URL set, else database."""
     try:
-        if "DATABASE_URL" in st.secrets:
+        if st.secrets.get("DATABASE_URL"):
             from utils import supabase_db as _b
             return _b
     except Exception:
         pass
+    if os.environ.get("DATABASE_URL"):
+        from utils import supabase_db as _b
+        return _b
     from utils import database as _b
     return _b
 

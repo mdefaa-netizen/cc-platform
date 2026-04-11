@@ -1130,8 +1130,16 @@ def get_mileage_total_pending():
 # When DATABASE_URL is configured (Supabase / Streamlit Cloud), swap every
 # function above with its psycopg2 equivalent.  Local dev keeps SQLite.
 try:
-    import streamlit as _st
-    if _st.secrets.get("DATABASE_URL"):
+    import os as _os
+    _db_url = None
+    try:
+        import streamlit as _st
+        _db_url = _st.secrets.get("DATABASE_URL")
+    except Exception:
+        _db_url = None
+    if not _db_url:
+        _db_url = _os.environ.get("DATABASE_URL")
+    if _db_url:
         import utils.supabase_db as _pg
         import inspect as _inspect
         for _name, _obj in _inspect.getmembers(_pg):
