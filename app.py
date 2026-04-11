@@ -8,7 +8,7 @@ from utils.database import (init_db, init_mileage, get_dashboard_stats, get_over
                              get_all_tasks, get_activity_log, init_activity_log,
                              get_notifications, get_unread_count, mark_notifications_read,
                              get_unread_message_count, init_messages, get_all_messages,
-                             init_users)
+                             init_users, get_connection)
 try:
     from utils.database import init_all
 except ImportError:
@@ -141,6 +141,113 @@ with c4:
     <div class="kpi-label">Overdue Tasks</div><div class="kpi-value">{overdue_count}</div>
     <div class="kpi-sub">{'Action required' if overdue_count else 'All on track'}</div>
     </div>""", unsafe_allow_html=True)
+
+st.markdown("<br>", unsafe_allow_html=True)
+
+# ── Event Map ──────────────────────────────────────────────────────────────────
+st.markdown("### 🗺️ Event Map — New Hampshire")
+
+try:
+    import folium
+    from streamlit_folium import st_folium
+    from geopy.geocoders import Nominatim
+    from geopy.exc import GeocoderServiceError, GeocoderTimedOut
+    _MAP_OK = True
+except ImportError as _map_ie:
+    _MAP_OK = False
+    st.info(f"Map unavailable — run `pip install folium streamlit-folium geopy` ({_map_ie}).")
+
+if _MAP_OK:
+    from datetime import datetime as _dt
+
+    @st.cache_resource
+    def _nh_geocoder():
+        return Nominatim(user_agent="cc-platform-nh-map")
+
+    if "_geo_cache" not in st.session_state:
+        st.session_state._geo_cache = {}
+    _geo_cache = st.session_state._geo_cache
+
+    def _geocode_city(city_name: str):
+        if not city_name:
+            return None
+        key = city_name.strip().lower()
+        if key in _geo_cache:
+            return _geo_cache[key]
+        try:
+            loc = _nh_geocoder().geocode(f"{city_name}, NH, USA", timeout=5)
+            coords = (loc.latitude, loc.longitude) if loc else None
+        except (GeocoderServiceError, GeocoderTimedOut, Exception):
+            coords = None
+        _geo_cache[key] = coords
+        return coords
+
+    _map_conn = get_connection()
+    _map_rows = _map_conn.execute("""
+        SELECT e.event_id, e.event_name, e.event_date, e.city,
+               h.name AS host_name, h.venue_name
+        FROM events e
+        LEFT JOIN hosts h ON e.host_id = h.host_id
+        ORDER BY e.event_date
+    """).fetchall()
+    _fac_rows = _map_conn.execute("""
+        SELECT ef.event_id, f.name AS facilitator_name
+        FROM event_facilitators ef
+        JOIN facilitators f ON f.facilitator_id = ef.facilitator_id
+    """).fetchall()
+    _map_conn.close()
+
+    _facs_by_event = {}
+    for _fr in _fac_rows:
+        _facs_by_event.setdefault(_fr["event_id"], []).append(_fr["facilitator_name"])
+
+    nh_map = folium.Map(location=[43.97, -71.57], zoom_start=8, tiles="OpenStreetMap")
+    _town_idx = {}
+    _plotted = 0
+    for _ev in _map_rows:
+        _city = (_ev["city"] or "").strip()
+        if not _city:
+            continue
+        _coords = _geocode_city(_city)
+        if not _coords:
+            continue
+        _key = _city.lower()
+        _i = _town_idx.get(_key, 0)
+        _town_idx[_key] = _i + 1
+        _lat = _coords[0] + (_i * 0.006)
+        _lon = _coords[1] + (_i * 0.006)
+
+        try:
+            _date_fmt = _dt.fromisoformat(str(_ev["event_date"])[:10]).strftime("%B %d, %Y")
+        except Exception:
+            _date_fmt = str(_ev["event_date"] or "")
+        _host_label = _ev["venue_name"] or _ev["host_name"] or "—"
+        _fac_label = ", ".join(_facs_by_event.get(_ev["event_id"], [])) or "—"
+        _tooltip_html = (
+            f"<div style='font-size:0.85rem'>"
+            f"<strong>{_esc(_date_fmt)}</strong><br>"
+            f"🏛️ {_esc(_host_label)}<br>"
+            f"🎤 {_esc(_fac_label)}"
+            f"</div>"
+        )
+
+        folium.CircleMarker(
+            location=[_lat, _lon],
+            radius=7,
+            color="#2A7F7F",
+            weight=2,
+            fill=True,
+            fill_color="#2A7F7F",
+            fill_opacity=0.85,
+            tooltip=folium.Tooltip(_tooltip_html, sticky=True),
+        ).add_to(nh_map)
+        _plotted += 1
+
+    st_folium(nh_map, width=None, height=460, returned_objects=[])
+    if _plotted == 0:
+        st.caption("No events with locatable towns yet — add a city to an event to see it on the map.")
+    else:
+        st.caption(f"📍 {_plotted} event{'s' if _plotted != 1 else ''} mapped")
 
 st.markdown("<br>", unsafe_allow_html=True)
 
