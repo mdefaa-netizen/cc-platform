@@ -105,12 +105,12 @@ def reset_user_password(email: str, new_password: str):
 # ── Session guard ─────────────────────────────────────────────────────────────
 
 def require_auth(allowed_roles=None):
-    """Call at the top of every page. Redirects to login.py if not authenticated
-    or if the user's role is not in allowed_roles.
+    """Call at the top of every page. Redirects to pages/0_Login.py if not
+    authenticated, or if the user's role is not in allowed_roles.
     """
     if not st.session_state.get("authenticated"):
         try:
-            st.switch_page("login.py")
+            st.switch_page("pages/0_Login.py")
         except Exception:
             st.warning("Please sign in.")
             st.stop()
@@ -120,7 +120,7 @@ def require_auth(allowed_roles=None):
     if login_at and (time.time() - login_at > SESSION_TIMEOUT_SECONDS):
         st.session_state.clear()
         try:
-            st.switch_page("login.py")
+            st.switch_page("pages/0_Login.py")
         except Exception:
             st.warning("Session expired. Please sign in again.")
             st.stop()
@@ -158,7 +158,7 @@ def render_sidebar_user():
         if st.button("🔒 Sign Out", use_container_width=True, key=f"_signout_{st.session_state.get('_sidebar_nonce', 0)}"):
             st.session_state.clear()
             try:
-                st.switch_page("login.py")
+                st.switch_page("pages/0_Login.py")
             except Exception:
                 st.rerun()
 

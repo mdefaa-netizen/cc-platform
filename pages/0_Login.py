@@ -1,7 +1,11 @@
 """
-Login entry point for the CC Platform.
+Login page for the CC Platform.
 
-Run with:  streamlit run login.py
+This page is the auth gate. It is the target of st.switch_page() from app.py
+when the user is not authenticated. On successful login, it switches back
+to app.py (the main script / dashboard).
+
+Run the app with:  streamlit run app.py
 """
 import sys
 import os
@@ -9,9 +13,14 @@ import time
 
 import streamlit as st
 
-sys.path.insert(0, os.path.dirname(__file__))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from utils.auth import verify_password, get_user_by_email, ROLE_LABELS, ensure_bootstrap_coordinator
+from utils.auth import (
+    verify_password,
+    get_user_by_email,
+    ROLE_LABELS,
+    ensure_bootstrap_coordinator,
+)
 from utils.styles import inject_css
 
 try:
@@ -39,7 +48,7 @@ else:
     init_users()
 ensure_bootstrap_coordinator()
 
-# Already signed in → jump to the dashboard.
+# Already signed in → jump to the dashboard (app.py is the main script).
 if st.session_state.get("authenticated"):
     st.switch_page("app.py")
 
@@ -69,8 +78,15 @@ if locked_out:
 
 with st.form("login_form", clear_on_submit=False):
     email = st.text_input("Email", placeholder="you@example.org", autocomplete="email")
-    pwd = st.text_input("Password", type="password", placeholder="Enter your password", autocomplete="current-password")
-    submitted = st.form_submit_button("Sign In", use_container_width=True, disabled=locked_out)
+    pwd = st.text_input(
+        "Password",
+        type="password",
+        placeholder="Enter your password",
+        autocomplete="current-password",
+    )
+    submitted = st.form_submit_button(
+        "Sign In", use_container_width=True, disabled=locked_out
+    )
 
 if submitted and not locked_out:
     if not email or not pwd:
@@ -82,21 +98,30 @@ if submitted and not locked_out:
             st.session_state.user_id = user.get("id") or user.get("user_id")
             st.session_state.user_email = user["email"]
             st.session_state.user_role = user["role"]
-            st.session_state.user_label = ROLE_LABELS.get(user["role"], user["role"].title())
+            st.session_state.user_label = ROLE_LABELS.get(
+                user["role"], user["role"].title()
+            )
             st.session_state.user_full_name = user.get("full_name") or user["email"]
             st.session_state._login_at = time.time()
             st.session_state._login_attempts = 0
             st.switch_page("app.py")
         else:
-            st.session_state._login_attempts = st.session_state.get("_login_attempts", 0) + 1
+            st.session_state._login_attempts = (
+                st.session_state.get("_login_attempts", 0) + 1
+            )
             if st.session_state._login_attempts >= _MAX_LOGIN_ATTEMPTS:
                 st.session_state._lockout_until = time.time() + _LOCKOUT_SECONDS
-                st.error(f"Too many failed attempts. Locked out for {_LOCKOUT_SECONDS // 60} minutes.")
+                st.error(
+                    f"Too many failed attempts. Locked out for "
+                    f"{_LOCKOUT_SECONDS // 60} minutes."
+                )
             elif user and not user.get("is_active"):
                 st.error("This account is deactivated. Contact a Coordinator.")
             else:
                 remaining = _MAX_LOGIN_ATTEMPTS - st.session_state._login_attempts
-                st.error(f"Invalid email or password. {remaining} attempt(s) remaining.")
+                st.error(
+                    f"Invalid email or password. {remaining} attempt(s) remaining."
+                )
 
 st.markdown(
     """
