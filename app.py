@@ -1,23 +1,20 @@
 import streamlit as st
-import sys, os, time as _time
+import sys, os
 from html import escape as _esc
 sys.path.insert(0, os.path.dirname(__file__))
-
-_SESSION_TIMEOUT_SECONDS = 3600  # 1 hour
-_MAX_LOGIN_ATTEMPTS = 5
-_LOCKOUT_SECONDS = 300  # 5 minutes
 
 from utils.database import (init_db, init_mileage, get_dashboard_stats, get_overdue_tasks,
                              get_upcoming_events, get_all_communications,
                              get_all_tasks, get_activity_log, init_activity_log,
                              get_notifications, get_unread_count, mark_notifications_read,
                              get_unread_message_count, init_messages, get_all_messages,
-                             init_users, get_user_by_username, verify_password)
+                             init_users)
 try:
     from utils.database import init_all
 except ImportError:
     init_all = None
 from utils.styles import inject_css, page_header
+from utils.auth import require_auth, render_sidebar_user, ensure_bootstrap_coordinator
 
 st.set_page_config(
     page_title="Community Conversations Coordinator",
@@ -31,91 +28,9 @@ if init_all:
     init_all()   # single DB connection for all tables
 else:
     init_db(); init_activity_log(); init_messages(); init_mileage(); init_users()
+ensure_bootstrap_coordinator()
 
-ROLE_LABELS = {
-    "coordinator": "Coordinator",
-    "nhh":         "NHH Colleague",
-    "cdfa":        "CDFA Colleague",
-    "facilitator": "Facilitator",
-    "host":        "Host",
-}
-
-def check_password():
-    if "authenticated" not in st.session_state:
-        st.session_state.authenticated = False
-        st.session_state.user_role     = None
-        st.session_state.user_label    = None
-        st.session_state.username      = None
-        st.session_state.linked_id     = None
-        st.session_state._login_at     = None
-
-    # Session timeout check
-    if st.session_state.authenticated:
-        if st.session_state.get("_login_at") and (_time.time() - st.session_state._login_at > _SESSION_TIMEOUT_SECONDS):
-            st.session_state.clear()
-            st.warning("Session expired. Please sign in again.")
-            st.rerun()
-        return True
-
-    # Rate limiting state
-    if "_login_attempts" not in st.session_state:
-        st.session_state._login_attempts = 0
-        st.session_state._lockout_until  = 0
-
-    st.markdown("""
-    <div style='max-width:440px;margin:5rem auto;background:white;padding:2.5rem 2rem;
-    border-radius:14px;box-shadow:0 8px 32px rgba(0,0,0,0.12);'>
-    <div style='text-align:center;margin-bottom:1.5rem'>
-        <div style='font-size:2.5rem'>🗺️</div>
-        <h2 style='font-family:Playfair Display,serif;color:#1B2A4A;margin:0.5rem 0 0.2rem'>
-            Community Conversations</h2>
-        <p style='color:#7F8C8D;font-size:0.9rem;margin:0'>
-            NH Humanities & CDFA Coordinator Platform</p>
-    </div>
-    """, unsafe_allow_html=True)
-
-    # Check lockout
-    locked_out = st.session_state.get("_lockout_until", 0) > _time.time()
-    if locked_out:
-        remaining = int(st.session_state._lockout_until - _time.time())
-        st.error(f"Too many failed attempts. Try again in {remaining} seconds.")
-
-    username = st.text_input("Username", placeholder="Enter your username")
-    pwd = st.text_input("Password", type="password", placeholder="Enter your password")
-    if st.button("Sign In", use_container_width=True, disabled=locked_out):
-        if locked_out:
-            st.stop()
-        if username and pwd:
-            user = get_user_by_username(username.strip().lower())
-            if user and verify_password(pwd, user["password_hash"]):
-                st.session_state.authenticated   = True
-                st.session_state.user_role       = user["role"]
-                st.session_state.user_label      = ROLE_LABELS.get(user["role"], user["role"].title())
-                st.session_state.username        = user["username"]
-                st.session_state.linked_id       = user.get("linked_id")
-                st.session_state._login_at       = _time.time()
-                st.session_state._login_attempts = 0
-                st.rerun()
-            else:
-                st.session_state._login_attempts = st.session_state.get("_login_attempts", 0) + 1
-                if st.session_state._login_attempts >= _MAX_LOGIN_ATTEMPTS:
-                    st.session_state._lockout_until = _time.time() + _LOCKOUT_SECONDS
-                    st.error(f"Too many failed attempts. Locked out for {_LOCKOUT_SECONDS // 60} minutes.")
-                else:
-                    remaining = _MAX_LOGIN_ATTEMPTS - st.session_state._login_attempts
-                    st.error(f"Invalid username or password. {remaining} attempt(s) remaining.")
-        else:
-            st.error("Please enter both username and password.")
-
-    st.markdown("""
-    <div style='margin-top:1.5rem;padding-top:1rem;border-top:1px solid #eee;font-size:0.8rem;color:#aaa;text-align:center'>
-        Coordinator · NHH · CDFA · Facilitator · Host
-    </div></div>
-    """, unsafe_allow_html=True)
-    return False
-
-if not check_password():
-    st.stop()
+require_auth()
 
 role  = st.session_state.get("user_role", "coordinator")
 label = st.session_state.get("user_label", "Coordinator")
@@ -131,20 +46,9 @@ overdue_count = stats.get("overdue_tasks", 0)
 unread        = get_unread_count(role)
 unread_msgs   = get_unread_message_count()
 
-with st.sidebar:
-    st.markdown(f"""
-    <div style='text-align:center;padding:0.8rem 0 0.3rem'>
-        <div style='font-size:1.8rem'>🗺️</div>
-        <div style='font-family:Playfair Display,serif;font-size:1rem;font-weight:700;
-        color:white;line-height:1.2'>Community Conversations</div>
-        <div style='font-size:0.7rem;color:#aab;margin-top:0.2rem'>NH Humanities & CDFA</div>
-        <div style='margin-top:0.4rem;background:#ffffff22;border-radius:6px;
-        padding:3px 8px;font-size:0.72rem;color:#7dd'>
-        Signed in as: <strong>{_esc(label)}</strong></div>
-    </div>
-    <hr style='border-color:#ffffff22;margin:0.5rem 0'>
-    """, unsafe_allow_html=True)
+render_sidebar_user()
 
+with st.sidebar:
     # Role-based navigation
     if role == "coordinator":
         st.page_link("app.py",                    label="🏠  Dashboard",        use_container_width=True)
@@ -161,8 +65,9 @@ with st.sidebar:
         st.page_link("pages/7_Payments.py",        label="🚗  Mileage",          use_container_width=True)
         st.page_link("pages/14_Messages.py",       label=f"💬  Messages {'(!)' if unread_msgs else ''}",   use_container_width=True)
         st.page_link("pages/13_Portal_Access.py",  label="🔑  Portal Access",    use_container_width=True)
+        st.page_link("pages/15_Admin_Users.py",    label="👥  User Admin",       use_container_width=True)
         st.page_link("pages/12_Settings.py",       label="⚙️  Settings",         use_container_width=True)
-    elif role in ("cdfa", "nhh"):
+    elif role in ("cdfa_staff", "nhh_staff"):
         st.page_link("app.py",                    label="🏠  Dashboard",        use_container_width=True)
         st.page_link("pages/2_Events.py",          label="📅  Events",           use_container_width=True)
         st.page_link("pages/3_Hosts.py",           label="👥  Hosts",            use_container_width=True)
@@ -180,11 +85,6 @@ with st.sidebar:
         st.page_link("pages/2_Events.py",          label="📅  My Events",        use_container_width=True)
         st.page_link("pages/3_Hosts.py",           label="👥  My Profile",       use_container_width=True)
         st.page_link("pages/14_Messages.py",       label="💬  Messages",         use_container_width=True)
-
-    st.markdown("<hr style='border-color:#ffffff22;margin:0.5rem 0'>", unsafe_allow_html=True)
-    if st.button("🔒 Sign Out", use_container_width=True):
-        st.session_state.clear()
-        st.rerun()
 
 
 # ── Dashboard ──────────────────────────────────────────────────────────────────

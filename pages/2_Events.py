@@ -8,6 +8,7 @@ from utils.database import (
     get_all_hosts, get_all_facilitators, get_event_facilitators,
     get_event_communications, get_event_feedback, init_db
 )
+from utils.auth import require_auth, render_sidebar_user
 from utils.styles import inject_css, page_header
 
 st.set_page_config(page_title="Events · CC Platform", page_icon="📅", layout="wide")
@@ -18,15 +19,10 @@ try:
 except ImportError:
     init_db()
 
-if not st.session_state.get("authenticated"):
-    st.warning("Please log in.")
-    st.stop()
+require_auth()
+render_sidebar_user()
 role = st.session_state.get("user_role", None)
 linked_id = st.session_state.get("linked_id", None)
-
-if role is None:
-    st.warning("Please log in.")
-    st.stop()
 
 _role       = role
 _is_coord   = (_role == "coordinator")
@@ -222,8 +218,8 @@ if _is_coord and tab_edit:
                     if changes:
                         change_str = " | ".join(changes)
                         # Notify NHH and CDFA
-                        add_notification(f"Event '{ename}' updated: {change_str}", "nhh")
-                        add_notification(f"Event '{ename}' updated: {change_str}", "cdfa")
+                        add_notification(f"Event '{ename}' updated: {change_str}", "nhh_staff")
+                        add_notification(f"Event '{ename}' updated: {change_str}", "cdfa_staff")
                         # Notify the specific host of this event
                         if host_sel2:
                             h_info = host_map.get(host_sel2, {})

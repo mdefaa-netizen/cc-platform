@@ -10,6 +10,7 @@ from utils.database import (
     add_mileage_reimbursement, update_mileage_status,
     delete_mileage_reimbursement
 )
+from utils.auth import require_auth, render_sidebar_user
 from utils.styles import inject_css, page_header
 
 st.set_page_config(page_title="Payments · CC Platform", page_icon="💰", layout="wide")
@@ -21,15 +22,9 @@ except ImportError:
     init_db()
     init_mileage()  # Ensure mileage_reimbursements table exists
 
-if not st.session_state.get("authenticated"):
-    st.warning("Please log in.")
-    st.stop()
-role = st.session_state.get("user_role", None)
+role = require_auth(allowed_roles=["coordinator", "cdfa_staff", "nhh_staff"])
+render_sidebar_user()
 linked_id = st.session_state.get("linked_id", None)
-
-if role not in ("coordinator", "cdfa", "nhh"):
-    st.error("You do not have access to this page.")
-    st.stop()
 
 _role     = role
 _is_coord = (_role == "coordinator")

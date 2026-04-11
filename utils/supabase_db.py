@@ -10,7 +10,33 @@ import psycopg2.extras
 import psycopg2.pool
 import streamlit as st
 from datetime import datetime, date, timedelta
-import hashlib, hmac, os, secrets, string
+import os
+import hashlib
+import hmac
+
+
+# ── Legacy password hashing ──────────────────────────────────────────────────
+# Used ONLY by the separate portal_access / check_portal_login system.
+# The main RBAC users table uses bcrypt via utils/auth.py.
+
+_PBKDF2_ITERATIONS = 600_000
+
+def hash_password(password: str) -> str:
+    salt = os.urandom(16)
+    dk = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, _PBKDF2_ITERATIONS)
+    return salt.hex() + ":" + dk.hex()
+
+def verify_password(password: str, stored_hash: str) -> bool:
+    try:
+        salt_hex, dk_hex = stored_hash.split(":")
+        salt = bytes.fromhex(salt_hex)
+        for iters in (_PBKDF2_ITERATIONS, 260_000, 100_000):
+            dk = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, iters)
+            if hmac.compare_digest(dk.hex(), dk_hex):
+                return True
+        return False
+    except Exception:
+        return False
 
 DB_PATH = "supabase"  # Sentinel so any code that prints DB_PATH still works
 
@@ -71,28 +97,7 @@ def _execute(conn, query, params=None):
         _putconn(conn)
 
 
-# ── Password Hashing ─────────────────────────────────────────────────────────
-
-_PBKDF2_ITERATIONS = 600_000
-
-def hash_password(password: str) -> str:
-    salt = os.urandom(16)
-    dk = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, _PBKDF2_ITERATIONS)
-    return salt.hex() + ":" + dk.hex()
-
-
-def verify_password(password: str, stored_hash: str) -> bool:
-    try:
-        salt_hex, dk_hex = stored_hash.split(":")
-        salt = bytes.fromhex(salt_hex)
-        # Try current iteration count first, then legacy counts
-        for iters in (_PBKDF2_ITERATIONS, 260_000, 100_000):
-            dk = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, iters)
-            if hmac.compare_digest(dk.hex(), dk_hex):
-                return True
-        return False
-    except Exception:
-        return False
+# Password hashing lives in utils/auth.py (bcrypt).
 
 
 # ── Schema Initialisation ─────────────────────────────────────────────────────
@@ -144,8 +149,12 @@ def init_all():
             venue_address TEXT, city TEXT, status TEXT DEFAULT 'Scheduled',
             attendance_count INTEGER, attendance_confirmed INTEGER DEFAULT 0,
             event_summary TEXT,
+            owner_user_id UUID,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
+        # Migration for pre-existing events tables missing owner_user_id.
+        cur.execute("""ALTER TABLE events
+            ADD COLUMN IF NOT EXISTS owner_user_id UUID""")
         # event_facilitators
         cur.execute("""CREATE TABLE IF NOT EXISTS event_facilitators (
             event_facilitator_id SERIAL PRIMARY KEY,
@@ -216,32 +225,108 @@ def init_all():
             target_role TEXT DEFAULT 'all', event_id INTEGER,
             is_read INTEGER DEFAULT 0,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
-        # users
+        # users (RBAC — email-based)
+        # Drop the legacy username-based table if it exists so the wipe/reseed
+        # migration completes cleanly on first run.
+        cur.execute("""SELECT column_name FROM information_schema.columns
+                        WHERE table_name='users' AND column_name='username'""")
+        if cur.fetchone():
+            cur.execute("DROP TABLE IF EXISTS users CASCADE")
         cur.execute("""CREATE TABLE IF NOT EXISTS users (
-            user_id SERIAL PRIMARY KEY,
-            username TEXT UNIQUE NOT NULL,
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            email TEXT UNIQUE NOT NULL,
             password_hash TEXT NOT NULL,
-            role TEXT NOT NULL CHECK (role IN ('coordinator','facilitator','host','cdfa','nhh')),
-            linked_id INTEGER,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
-        # Seed default users if table is empty
-        cur.execute("SELECT COUNT(*) FROM users")
-        if cur.fetchone()[0] == 0:
-            import string as _s
-            _chars = _s.ascii_letters + _s.digits
-            _gen = lambda: ''.join(__import__('secrets').choice(_chars) for _ in range(16))
-            for uname, pwd, r in [("coordinator", _gen(), "coordinator"),
-                                   ("nhh", _gen(), "nhh"), ("cdfa", _gen(), "cdfa")]:
-                cur.execute("INSERT INTO users (username,password_hash,role) VALUES (%s,%s,%s)",
-                            (uname, hash_password(pwd), r))
-            import logging
-            logging.warning(
-                "Default users seeded with random passwords. "
-                "Set passwords via the database or redeploy with pre-configured users."
-            )
+            role TEXT NOT NULL CHECK (role IN (
+                'coordinator','facilitator','host','cdfa_staff','nhh_staff'
+            )),
+            full_name TEXT,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            is_active BOOLEAN NOT NULL DEFAULT TRUE)""")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_users_email ON users (email)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_users_role  ON users (role)")
+        # Wire up the FK from events.owner_user_id now that users exists.
+        cur.execute("""DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.table_constraints
+                    WHERE constraint_name = 'events_owner_user_id_fkey'
+                ) THEN
+                    ALTER TABLE events
+                    ADD CONSTRAINT events_owner_user_id_fkey
+                    FOREIGN KEY (owner_user_id) REFERENCES users(id)
+                    ON DELETE SET NULL;
+                END IF;
+            END $$""")
     conn.commit()
     _putconn(conn)
     _schema_initialised = True
+
+
+# ── Users (RBAC) ──────────────────────────────────────────────────────────────
+
+def init_users():
+    """Idempotent alias — init_all() already creates the users table."""
+    init_all()
+
+
+def get_user_by_email(email):
+    conn = get_connection()
+    return (_fetchall(conn, "SELECT * FROM users WHERE email=%s", (email,)) or [None])[0]
+
+
+def create_user(email, password_hash, role, full_name=""):
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO users (email, password_hash, role, full_name) "
+                "VALUES (%s, %s, %s, %s) RETURNING id",
+                (email, password_hash, role, full_name),
+            )
+            new_id = cur.fetchone()[0]
+        conn.commit()
+        return new_id
+    finally:
+        _putconn(conn)
+
+
+def list_users():
+    conn = get_connection()
+    return _fetchall(
+        conn,
+        "SELECT id, email, role, full_name, created_at, is_active "
+        "FROM users ORDER BY created_at DESC",
+    )
+
+
+def update_user_role(user_id, role):
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE users SET role=%s WHERE id=%s", (role, user_id))
+        conn.commit()
+    finally:
+        _putconn(conn)
+
+
+def set_user_active(user_id, is_active):
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE users SET is_active=%s WHERE id=%s", (bool(is_active), user_id))
+        conn.commit()
+    finally:
+        _putconn(conn)
+
+
+def reset_user_password(email, new_password_hash):
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE users SET password_hash=%s WHERE email=%s", (new_password_hash, email))
+        conn.commit()
+    finally:
+        _putconn(conn)
 
 
 def init_db():
@@ -393,73 +478,9 @@ def init_db():
     _putconn(conn)
 
 
-def init_users():
-    if _schema_initialised:
-        return
-    conn = get_connection()
-    with conn.cursor() as cur:
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                user_id SERIAL PRIMARY KEY,
-                username TEXT UNIQUE NOT NULL,
-                password_hash TEXT NOT NULL,
-                role TEXT NOT NULL CHECK (role IN ('coordinator','facilitator','host','cdfa','nhh')),
-                linked_id INTEGER,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        # Seed default users if table is empty
-        cur.execute("SELECT COUNT(*) FROM users")
-        if cur.fetchone()[0] == 0:
-            import string as _s
-            _chars = _s.ascii_letters + _s.digits
-            _gen = lambda: ''.join(__import__('secrets').choice(_chars) for _ in range(16))
-            defaults = [
-                ("coordinator", _gen(), "coordinator"),
-                ("nhh",         _gen(), "nhh"),
-                ("cdfa",        _gen(), "cdfa"),
-            ]
-            for uname, pwd, role in defaults:
-                cur.execute(
-                    "INSERT INTO users (username, password_hash, role) VALUES (%s,%s,%s)",
-                    (uname, hash_password(pwd), role))
-            import logging
-            logging.warning(
-                "Default users seeded with random passwords. "
-                "Set passwords via the database or redeploy with pre-configured users."
-            )
-    conn.commit()
-    _putconn(conn)
-
-
-def get_user_by_username(username):
-    conn = get_connection()
-    return _fetchone(conn, "SELECT * FROM users WHERE username=%s", (username,))
-
-
-def create_user(username, password, role, linked_id=None):
-    conn = get_connection()
-    _execute(conn, """
-        INSERT INTO users (username, password_hash, role, linked_id)
-        VALUES (%s,%s,%s,%s)
-    """, (username, hash_password(password), role, linked_id))
-
-
-def username_exists(username):
-    conn = get_connection()
-    row = _fetchone(conn, "SELECT user_id FROM users WHERE username=%s", (username,))
-    return row is not None
-
-
-def get_all_users():
-    conn = get_connection()
-    return _fetchall(conn, "SELECT user_id, username, role, linked_id, created_at FROM users ORDER BY username")
-
-
-def reset_user_password(username, new_password):
-    conn = get_connection()
-    _execute(conn, "UPDATE users SET password_hash=%s WHERE username=%s",
-             (hash_password(new_password), username))
+# Legacy username-based user helpers removed — see the RBAC section above
+# (init_users, get_user_by_email, create_user, list_users, update_user_role,
+# set_user_active, reset_user_password) which use the new email schema.
 
 
 def init_mileage():

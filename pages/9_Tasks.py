@@ -7,6 +7,7 @@ from utils.database import (
     log_activity, add_notification,
     get_all_tasks, add_task, update_task, delete_task,
     get_all_events, get_overdue_tasks, init_db)
+from utils.auth import require_auth, render_sidebar_user
 from utils.styles import inject_css, page_header
 
 st.set_page_config(page_title="Tasks · CC Platform", page_icon="✅", layout="wide")
@@ -17,14 +18,8 @@ try:
 except ImportError:
     init_db()
 
-if not st.session_state.get("authenticated"):
-    st.warning("Please log in.")
-    st.stop()
-role = st.session_state.get("user_role", None)
-
-if role != "coordinator":
-    st.error("Task management is only accessible to the Coordinator.")
-    st.stop()
+role = require_auth(allowed_roles=["coordinator"])
+render_sidebar_user()
 
 page_header("✅ Task Management", "Track coordinator tasks, deadlines, and progress")
 

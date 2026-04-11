@@ -2,56 +2,48 @@
 """
 One-time password reset utility for CC Platform.
 
-Run this script to reset a user's password when you cannot log in to the app.
-
 Usage:
-    python reset_password.py <username> <new_password>
+    python reset_password.py <email> <new_password>
 
-Examples:
-    python reset_password.py coordinator MyNewSecurePassword123
-    python reset_password.py nhh NewNHHPassword456
+Example:
+    python reset_password.py mdefaa@gmail.com MyNewSecurePassword123
 """
 import sys
 import os
 
 sys.path.insert(0, os.path.dirname(__file__))
 
+
 def main():
     if len(sys.argv) != 3:
-        print("Usage: python reset_password.py <username> <new_password>")
-        print("Example: python reset_password.py coordinator MyNewSecurePassword123")
+        print("Usage: python reset_password.py <email> <new_password>")
+        print("Example: python reset_password.py mdefaa@gmail.com MyNewSecurePassword123")
         sys.exit(1)
 
-    username = sys.argv[1].strip().lower()
+    email = sys.argv[1].strip().lower()
     new_password = sys.argv[2]
 
     if len(new_password) < 8:
         print("Error: Password must be at least 8 characters.")
         sys.exit(1)
 
-    from utils.database import get_user_by_username, hash_password, get_connection
+    from utils.auth import get_user_by_email, reset_user_password, ROLE_LABELS
 
-    user = get_user_by_username(username)
+    user = get_user_by_email(email)
     if not user:
-        print(f"Error: User '{username}' not found.")
+        print(f"Error: User '{email}' not found.")
+        from utils.auth import list_users
         print("\nExisting users:")
-        conn = get_connection()
-        rows = conn.execute("SELECT username, role FROM users").fetchall()
-        conn.close()
-        for r in rows:
-            print(f"  - {r['username']} ({r['role']})")
+        for u in list_users():
+            print(f"  - {u['email']} ({ROLE_LABELS.get(u['role'], u['role'])})")
         sys.exit(1)
 
-    conn = get_connection()
-    conn.execute("UPDATE users SET password_hash=? WHERE username=?",
-                 (hash_password(new_password), username))
-    conn.commit()
-    conn.close()
-
-    print(f"Password reset successfully for '{username}' ({user['role']}).")
-    print(f"\nYou can now sign in with:")
-    print(f"  Username: {username}")
+    reset_user_password(email, new_password)
+    print(f"Password reset successfully for '{email}' ({ROLE_LABELS.get(user['role'], user['role'])}).")
+    print("\nYou can now sign in with:")
+    print(f"  Email:    {email}")
     print(f"  Password: {new_password}")
+
 
 if __name__ == "__main__":
     main()

@@ -4,6 +4,7 @@ import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from utils.database import log_activity, add_notification, get_all_nhh, get_nhh, add_nhh, update_nhh, delete_nhh, init_db
+from utils.auth import require_auth, render_sidebar_user
 from utils.styles import inject_css, page_header
 
 st.set_page_config(page_title="NHH Colleagues · CC Platform", page_icon="🏛️", layout="wide")
@@ -14,14 +15,8 @@ try:
 except ImportError:
     init_db()
 
-if not st.session_state.get("authenticated"):
-    st.warning("Please log in.")
-    st.stop()
-role = st.session_state.get("user_role", None)
-
-if role != "coordinator":
-    st.error("This page is only accessible to the Coordinator.")
-    st.stop()
+role = require_auth(allowed_roles=["coordinator"])
+render_sidebar_user()
 
 _role = role
 _is_coord = True

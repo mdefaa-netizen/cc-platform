@@ -7,6 +7,7 @@ from utils.database import (
     get_unread_message_count, init_db, log_activity, add_notification,
     init_messages, send_message, get_messages_for_person
 )
+from utils.auth import require_auth, render_sidebar_user
 from utils.styles import inject_css, page_header
 
 st.set_page_config(page_title="Messages · CC Platform", page_icon="💬", layout="wide")
@@ -18,16 +19,10 @@ except ImportError:
     init_db()
     init_messages()
 
-if not st.session_state.get("authenticated"):
-    st.warning("Please log in.")
-    st.stop()
-role = st.session_state.get("user_role", None)
+role = require_auth(allowed_roles=["coordinator", "cdfa_staff", "nhh_staff", "facilitator", "host"])
+render_sidebar_user()
 linked_id = st.session_state.get("linked_id", None)
-username = st.session_state.get("username", "")
-
-if role not in ("coordinator", "cdfa", "nhh", "facilitator", "host"):
-    st.error("You do not have access to this page.")
-    st.stop()
+user_email = st.session_state.get("user_email", "")
 
 # Facilitators and hosts are redirected to the portal for messaging
 if role in ("facilitator", "host"):
@@ -127,7 +122,7 @@ if _is_coord:
 
 # ── CDFA / NHH: Send message to coordinator ──────────────────────────────────
 else:
-    role_label = "NHH Colleague" if role == "nhh" else "CDFA Colleague"
+    role_label = "NH Humanities Staff" if role == "nhh_staff" else "CDFA Staff"
     sender_name = st.session_state.get("user_label", role_label)
 
     tab_send, tab_history = st.tabs(["📤 Send Message", "📋 My Messages"])

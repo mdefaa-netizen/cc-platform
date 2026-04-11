@@ -8,6 +8,7 @@ from utils.database import (
     get_all_feedback, get_event_facilitators,
     log_report, get_all_reports, init_db)
 from utils.report_utils import generate_excel, generate_pdf
+from utils.auth import require_auth, render_sidebar_user
 from utils.styles import inject_css, page_header
 from datetime import datetime
 
@@ -19,15 +20,9 @@ try:
 except ImportError:
     init_db()
 
-if not st.session_state.get("authenticated"):
-    st.warning("Please log in.")
-    st.stop()
-role = st.session_state.get("user_role", None)
+role = require_auth(allowed_roles=["coordinator", "cdfa_staff", "nhh_staff"])
+render_sidebar_user()
 linked_id = st.session_state.get("linked_id", None)
-
-if role not in ("coordinator", "cdfa", "nhh"):
-    st.error("You do not have access to this page.")
-    st.stop()
 
 _role = role
 _is_coord = (_role == "coordinator")

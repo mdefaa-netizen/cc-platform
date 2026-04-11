@@ -8,6 +8,7 @@ from utils.database import (
     delete_portal_access, init_db, log_activity, add_notification,
     init_portal_access
 )
+from utils.auth import require_auth, render_sidebar_user
 from utils.styles import inject_css, page_header
 
 st.set_page_config(page_title="Portal Access · CC Platform", page_icon="🔑", layout="wide")
@@ -19,14 +20,8 @@ except ImportError:
     init_db()
     init_portal_access()
 
-if not st.session_state.get("authenticated"):
-    st.warning("Please log in.")
-    st.stop()
-role = st.session_state.get("user_role", None)
-
-if role != "coordinator":
-    st.error("This page is only accessible to the Coordinator.")
-    st.stop()
+role = require_auth(allowed_roles=["coordinator"])
+render_sidebar_user()
 
 page_header("🔑 Portal Access Management",
             "Grant and manage login access for hosts and facilitators")

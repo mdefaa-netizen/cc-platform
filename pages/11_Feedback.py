@@ -4,6 +4,7 @@ import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from utils.database import log_activity, add_notification, get_all_events, get_all_feedback, add_feedback, get_event_feedback, init_db
+from utils.auth import require_auth, render_sidebar_user
 from utils.styles import inject_css, page_header
 
 st.set_page_config(page_title="Feedback · CC Platform", page_icon="📝", layout="wide")
@@ -14,10 +15,8 @@ try:
 except ImportError:
     init_db()
 
-if not st.session_state.get("authenticated"):
-    st.warning("Please log in.")
-    st.stop()
-role = st.session_state.get("user_role", None)
+role = require_auth()
+render_sidebar_user()
 
 _role = role
 _is_coord = (_role == "coordinator")

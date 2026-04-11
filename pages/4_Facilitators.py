@@ -6,10 +6,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from utils.database import (
     log_activity, add_notification,
     get_all_facilitators, get_facilitator, add_facilitator,
-    update_facilitator, delete_facilitator, get_facilitator_events, init_db,
-    init_users, create_user, username_exists)
-import secrets as _secrets
-import string as _string
+    update_facilitator, delete_facilitator, get_facilitator_events, init_db)
+from utils.auth import require_auth, render_sidebar_user
 from utils.styles import inject_css, page_header
 
 st.set_page_config(page_title="Facilitators · CC Platform", page_icon="🎤", layout="wide")
@@ -20,19 +18,9 @@ try:
 except ImportError:
     init_db()
 
-if not st.session_state.get("authenticated"):
-    st.warning("Please log in.")
-    st.stop()
-role = st.session_state.get("user_role", None)
+role = require_auth(allowed_roles=["coordinator", "facilitator", "cdfa_staff", "nhh_staff"])
+render_sidebar_user()
 linked_id = st.session_state.get("linked_id", None)
-
-if role is None:
-    st.warning("Please log in.")
-    st.stop()
-
-if role not in ("coordinator", "facilitator", "cdfa", "nhh"):
-    st.error("You do not have access to this page.")
-    st.stop()
 
 _role = role
 _is_coord = (_role == "coordinator")
@@ -164,30 +152,7 @@ if tab_add:
                     log_activity("Facilitator Added", f"{name} — {spec}")
                     add_notification(f"New facilitator added: {name}", "all")
                     st.success(f"Facilitator '{name}' added!")
-
-                    # Auto-generate login credentials
-                    try:
-                        init_users()
-                        # Find the newly added facilitator's ID
-                        all_facs = get_all_facilitators()
-                        new_fac = next((f for f in all_facs if f["name"].lower() == name.lower()), None)
-                        if new_fac:
-                            # Generate username: firstname.lastname
-                            base_uname = name.strip().lower().replace(" ", ".")
-                            uname = base_uname
-                            counter = 2
-                            while username_exists(uname):
-                                uname = f"{base_uname}{counter}"
-                                counter += 1
-                            chars = _string.ascii_letters + _string.digits + "!@#$%"
-                            pwd = "".join(_secrets.choice(chars) for _ in range(16))
-                            create_user(uname, pwd, "facilitator", new_fac["facilitator_id"])
-                            st.success("Login credentials created!")
-                            st.warning(f"Share these credentials with {name} (shown once only):")
-                            st.code(f"Username: {uname}\nPassword: {pwd}\nRole: Facilitator")
-                    except Exception as e:
-                        st.warning(f"Facilitator saved but credential generation failed: {e}")
-
+                    st.info("To grant this facilitator a login account, go to 👥 User Admin.")
                     st.rerun()
 
 if tab_edit:

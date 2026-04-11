@@ -2,9 +2,32 @@ import sqlite3
 import os
 import hashlib
 import hmac
-import secrets
-import string
 from datetime import datetime
+
+
+# ── Legacy password hashing ──────────────────────────────────────────────────
+# NOTE: This pbkdf2 pair is ONLY used by the separate portal_access system
+# (hosts/facilitators signing in via pages/0_Portal.py via check_portal_login).
+# The main RBAC users table uses bcrypt via utils/auth.py.
+
+_PBKDF2_ITERATIONS = 600_000
+
+def hash_password(password: str) -> str:
+    salt = os.urandom(16)
+    dk = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, _PBKDF2_ITERATIONS)
+    return salt.hex() + ":" + dk.hex()
+
+def verify_password(password: str, stored_hash: str) -> bool:
+    try:
+        salt_hex, dk_hex = stored_hash.split(":")
+        salt = bytes.fromhex(salt_hex)
+        for iters in (_PBKDF2_ITERATIONS, 260_000, 100_000):
+            dk = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, iters)
+            if hmac.compare_digest(dk.hex(), dk_hex):
+                return True
+        return False
+    except Exception:
+        return False
 
 DB_PATH = os.environ.get("DB_PATH", "cc_platform.db")
 
@@ -100,6 +123,7 @@ def init_db():
             attendance_count INTEGER,
             attendance_confirmed INTEGER DEFAULT 0,
             event_summary TEXT,
+            owner_user_id INTEGER REFERENCES users(id),
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
@@ -153,90 +177,96 @@ def init_db():
     conn.commit()
     conn.close()
 
-# ── Password Hashing ─────────────────────────────────────────────────────────
-
-_PBKDF2_ITERATIONS = 600_000
-
-def hash_password(password: str) -> str:
-    salt = os.urandom(16)
-    dk = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, _PBKDF2_ITERATIONS)
-    return salt.hex() + ":" + dk.hex()
-
-def verify_password(password: str, stored_hash: str) -> bool:
-    try:
-        salt_hex, dk_hex = stored_hash.split(":")
-        salt = bytes.fromhex(salt_hex)
-        # Try current iteration count first, then legacy counts
-        for iters in (_PBKDF2_ITERATIONS, 260_000, 100_000):
-            dk = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, iters)
-            if hmac.compare_digest(dk.hex(), dk_hex):
-                return True
-        return False
-    except Exception:
-        return False
-
-# ── Users ─────────────────────────────────────────────────────────────────────
+# ── Users (RBAC) ──────────────────────────────────────────────────────────────
+# Password hashing lives in utils/auth.py (bcrypt). This module only stores and
+# retrieves the hash string. Schema: email-based, role-checked, activation flag.
 
 def init_users():
+    """Create the users table if missing. Wipes the old username-based schema
+    if it still exists. Does NOT seed — that is done by
+    utils.auth.ensure_bootstrap_coordinator().
+    """
     conn = get_connection()
+    # Drop the legacy username-based table if present.
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='users'"
+    ).fetchone()
+    if row and "username" in (row[0] or ""):
+        conn.execute("DROP TABLE IF EXISTS users")
     conn.executescript("""
         CREATE TABLE IF NOT EXISTS users (
-            user_id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT UNIQUE NOT NULL,
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            email TEXT UNIQUE NOT NULL,
             password_hash TEXT NOT NULL,
-            role TEXT NOT NULL CHECK (role IN ('coordinator','facilitator','host','cdfa','nhh')),
-            linked_id INTEGER,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            role TEXT NOT NULL CHECK (role IN (
+                'coordinator','facilitator','host','cdfa_staff','nhh_staff'
+            )),
+            full_name TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            is_active INTEGER NOT NULL DEFAULT 1
         );
+        CREATE INDEX IF NOT EXISTS idx_users_email ON users (email);
+        CREATE INDEX IF NOT EXISTS idx_users_role  ON users (role);
     """)
-    # Seed default users if table is empty
-    count = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
-    if count == 0:
-        _chars = string.ascii_letters + string.digits
-        _gen = lambda: ''.join(secrets.choice(_chars) for _ in range(16))
-        defaults = [
-            ("coordinator", _gen(), "coordinator"),
-            ("nhh",         _gen(), "nhh"),
-            ("cdfa",        _gen(), "cdfa"),
-        ]
-        for uname, pwd, role in defaults:
-            conn.execute(
-                "INSERT INTO users (username, password_hash, role) VALUES (?,?,?)",
-                (uname, hash_password(pwd), role))
-        import logging
-        logging.warning(
-            "Default users seeded with random passwords. "
-            "Set passwords via the database or redeploy with pre-configured users."
-        )
+    # Add owner_user_id to events if it's missing (for existing DBs created
+    # before this migration). SQLite: ALTER TABLE ADD COLUMN is idempotent
+    # only if we check first.
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(events)").fetchall()]
+    if "owner_user_id" not in cols:
+        try:
+            conn.execute("ALTER TABLE events ADD COLUMN owner_user_id INTEGER REFERENCES users(id)")
+        except sqlite3.OperationalError:
+            pass
     conn.commit()
     conn.close()
 
-def get_user_by_username(username):
+
+def get_user_by_email(email):
     with _safe_conn() as conn:
-        row = conn.execute("SELECT * FROM users WHERE username=?", (username,)).fetchone()
+        row = conn.execute("SELECT * FROM users WHERE email=?", (email,)).fetchone()
         return dict(row) if row else None
 
-def create_user(username, password, role, linked_id=None):
+
+def create_user(email, password_hash, role, full_name=""):
     with _safe_conn() as conn:
-        conn.execute(
-            "INSERT INTO users (username, password_hash, role, linked_id) VALUES (?,?,?,?)",
-            (username, hash_password(password), role, linked_id))
+        cur = conn.execute(
+            "INSERT INTO users (email, password_hash, role, full_name) VALUES (?,?,?,?)",
+            (email, password_hash, role, full_name),
+        )
         conn.commit()
+        return cur.lastrowid
 
-def username_exists(username):
-    with _safe_conn() as conn:
-        row = conn.execute("SELECT user_id FROM users WHERE username=?", (username,)).fetchone()
-        return row is not None
 
-def get_all_users():
+def list_users():
     with _safe_conn() as conn:
-        rows = conn.execute("SELECT user_id, username, role, linked_id, created_at FROM users ORDER BY username").fetchall()
+        rows = conn.execute(
+            "SELECT id, email, role, full_name, created_at, is_active "
+            "FROM users ORDER BY created_at DESC"
+        ).fetchall()
         return [dict(r) for r in rows]
 
-def reset_user_password(username, new_password):
+
+def update_user_role(user_id, role):
     with _safe_conn() as conn:
-        conn.execute("UPDATE users SET password_hash=? WHERE username=?",
-                     (hash_password(new_password), username))
+        conn.execute("UPDATE users SET role=? WHERE id=?", (role, user_id))
+        conn.commit()
+
+
+def set_user_active(user_id, is_active):
+    with _safe_conn() as conn:
+        conn.execute(
+            "UPDATE users SET is_active=? WHERE id=?",
+            (1 if is_active else 0, user_id),
+        )
+        conn.commit()
+
+
+def reset_user_password(email, new_password_hash):
+    with _safe_conn() as conn:
+        conn.execute(
+            "UPDATE users SET password_hash=? WHERE email=?",
+            (new_password_hash, email),
+        )
         conn.commit()
 
 # ── Hosts ──────────────────────────────────────────────────────────────────────

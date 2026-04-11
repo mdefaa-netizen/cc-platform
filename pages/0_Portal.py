@@ -9,6 +9,7 @@ from utils.database import (
     init_db, init_messages, init_portal_access,
     check_portal_login, add_notification
 )
+from utils.auth import require_auth, render_sidebar_user
 from utils.styles import inject_css
 from html import escape as _esc
 
@@ -22,6 +23,9 @@ except ImportError:
     init_db()
     init_messages()
     init_portal_access()
+
+require_auth(allowed_roles=["coordinator", "facilitator", "host"])
+render_sidebar_user()
 
 # ── Portal Login ───────────────────────────────────────────────────────────────
 if "portal_user" not in st.session_state:

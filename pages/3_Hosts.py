@@ -4,10 +4,8 @@ import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from utils.database import (log_activity, add_notification, get_all_hosts, get_host,
-    add_host, update_host, delete_host, get_host_events, init_db,
-    init_users, create_user, username_exists)
-import secrets as _secrets
-import string as _string
+    add_host, update_host, delete_host, get_host_events, init_db)
+from utils.auth import require_auth, render_sidebar_user
 from utils.styles import inject_css, page_header
 
 st.set_page_config(page_title="Hosts · CC Platform", page_icon="👥", layout="wide")
@@ -18,19 +16,9 @@ try:
 except ImportError:
     init_db()
 
-if not st.session_state.get("authenticated"):
-    st.warning("Please log in.")
-    st.stop()
-role = st.session_state.get("user_role", None)
+role = require_auth(allowed_roles=["coordinator", "host", "cdfa_staff", "nhh_staff"])
+render_sidebar_user()
 linked_id = st.session_state.get("linked_id", None)
-
-if role is None:
-    st.warning("Please log in.")
-    st.stop()
-
-if role not in ("coordinator", "host", "cdfa", "nhh"):
-    st.error("You do not have access to this page.")
-    st.stop()
 
 _role = role
 _is_coord = (_role == "coordinator")
@@ -150,30 +138,7 @@ if tab_add:
                     log_activity("Host Added", f"{name} — {venue}, {city}")
                     add_notification(f"New host added: {name}", "all")
                     st.success(f"✅ Host '{name}' added!")
-
-                    # Auto-generate login credentials
-                    try:
-                        init_users()
-                        all_hosts = get_all_hosts()
-                        new_host = next((h for h in all_hosts if h["name"].lower() == name.lower()), None)
-                        if new_host:
-                            # Generate username from venue name (slugified, max 20 chars)
-                            venue_str = (venue or name).strip().lower().replace(" ", ".")
-                            base_uname = venue_str[:20]
-                            uname = base_uname
-                            counter = 2
-                            while username_exists(uname):
-                                uname = f"{base_uname}{counter}"[:20]
-                                counter += 1
-                            chars = _string.ascii_letters + _string.digits + "!@#$%"
-                            pwd = "".join(_secrets.choice(chars) for _ in range(16))
-                            create_user(uname, pwd, "host", new_host["host_id"])
-                            st.success("Login credentials created!")
-                            st.warning(f"Share these credentials with {name} (shown once only):")
-                            st.code(f"Username: {uname}\nPassword: {pwd}\nRole: Host")
-                    except Exception as e:
-                        st.warning(f"Host saved but credential generation failed: {e}")
-
+                    st.info("To grant this host a login account, go to 👥 User Admin.")
                     st.rerun()
 
 if tab_edit:

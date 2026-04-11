@@ -10,6 +10,7 @@ from utils.database import (
     add_communication, get_all_communications, init_db)
 from utils.email_utils import (send_email, template_confirmation,
                                 template_reminder, template_post_event)
+from utils.auth import require_auth, render_sidebar_user
 from utils.styles import inject_css, page_header
 
 st.set_page_config(page_title="Communications · CC Platform", page_icon="📧", layout="wide")
@@ -20,15 +21,9 @@ try:
 except ImportError:
     init_db()
 
-if not st.session_state.get("authenticated"):
-    st.warning("Please log in.")
-    st.stop()
-role = st.session_state.get("user_role", None)
+role = require_auth(allowed_roles=["coordinator"])
+render_sidebar_user()
 linked_id = st.session_state.get("linked_id", None)
-
-if role != "coordinator":
-    st.error("Communications is only accessible to the Coordinator.")
-    st.stop()
 
 _role = role
 _is_coord = True
