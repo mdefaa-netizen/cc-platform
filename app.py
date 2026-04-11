@@ -152,12 +152,6 @@ try:
     from streamlit_folium import st_folium
     from geopy.geocoders import Nominatim
     from geopy.exc import GeocoderServiceError, GeocoderTimedOut
-    _MAP_OK = True
-except ImportError as _map_ie:
-    _MAP_OK = False
-    st.info(f"Map unavailable — run `pip install folium streamlit-folium geopy` ({_map_ie}).")
-
-if _MAP_OK:
     from datetime import datetime as _dt
 
     @st.cache_resource
@@ -175,7 +169,7 @@ if _MAP_OK:
         if key in _geo_cache:
             return _geo_cache[key]
         try:
-            loc = _nh_geocoder().geocode(f"{city_name}, NH, USA", timeout=5)
+            loc = _nh_geocoder().geocode(f"{city_name}, NH", timeout=5)
             coords = (loc.latitude, loc.longitude) if loc else None
         except (GeocoderServiceError, GeocoderTimedOut, Exception):
             coords = None
@@ -201,7 +195,11 @@ if _MAP_OK:
     for _fr in _fac_rows:
         _facs_by_event.setdefault(_fr["event_id"], []).append(_fr["facilitator_name"])
 
-    nh_map = folium.Map(location=[43.97, -71.57], zoom_start=8, tiles="OpenStreetMap")
+    nh_map = folium.Map(
+        location=[43.97, -71.57],
+        zoom_start=8,
+        tiles="CartoDB positron",
+    )
     _town_idx = {}
     _plotted = 0
     for _ev in _map_rows:
@@ -214,8 +212,8 @@ if _MAP_OK:
         _key = _city.lower()
         _i = _town_idx.get(_key, 0)
         _town_idx[_key] = _i + 1
-        _lat = _coords[0] + (_i * 0.006)
-        _lon = _coords[1] + (_i * 0.006)
+        _lat = _coords[0] + (_i * 0.01)
+        _lon = _coords[1] + (_i * 0.01)
 
         try:
             _date_fmt = _dt.fromisoformat(str(_ev["event_date"])[:10]).strftime("%B %d, %Y")
@@ -233,21 +231,25 @@ if _MAP_OK:
 
         folium.CircleMarker(
             location=[_lat, _lon],
-            radius=7,
-            color="#2A7F7F",
+            radius=10,
+            color="#2DD4BF",
             weight=2,
             fill=True,
-            fill_color="#2A7F7F",
+            fill_color="#2DD4BF",
             fill_opacity=0.85,
             tooltip=folium.Tooltip(_tooltip_html, sticky=True),
         ).add_to(nh_map)
         _plotted += 1
 
-    st_folium(nh_map, width=None, height=460, returned_objects=[])
+    st_folium(nh_map, width="100%", height=500, returned_objects=[])
     if _plotted == 0:
         st.caption("No events with locatable towns yet — add a city to an event to see it on the map.")
     else:
         st.caption(f"📍 {_plotted} event{'s' if _plotted != 1 else ''} mapped")
+except ImportError as _map_ie:
+    st.info(f"🗺️ Map unavailable — install dependencies: `pip install folium streamlit-folium geopy` ({_map_ie}).")
+except Exception as _map_err:
+    st.warning(f"🗺️ Map could not be rendered: {_map_err}")
 
 st.markdown("<br>", unsafe_allow_html=True)
 
