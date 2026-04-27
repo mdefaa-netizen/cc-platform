@@ -11,6 +11,7 @@ import psycopg2.pool
 import streamlit as st
 from datetime import datetime, date, timedelta
 import os
+import urllib.parse
 import hashlib
 import hmac
 
@@ -41,29 +42,123 @@ def verify_password(password: str, stored_hash: str) -> bool:
 DB_PATH = "supabase"  # Sentinel so any code that prints DB_PATH still works
 
 _pool = None
+_diagnostics_logged = False
+
+
+def _log_connection_diagnostics(url: str, source: str) -> None:
+    """Print non-sensitive DATABASE_URL diagnostics to stdout.
+
+    Gated by env var CC_DEBUG_DB=1. Runs at most once per process.
+    Never logs the password itself or the full URL — only derived facts
+    (length, character class, source, parsed components).
+    """
+    global _diagnostics_logged
+    if _diagnostics_logged:
+        return
+    if os.environ.get("CC_DEBUG_DB") != "1":
+        return
+    _diagnostics_logged = True
+
+    print(f"[CC_DEBUG_DB] DATABASE_URL source: {source}")
+    if not url:
+        print("[CC_DEBUG_DB] url is empty; nothing further to inspect")
+        return
+
+    has_leading_ws = url != url.lstrip()
+    has_trailing_ws = url != url.rstrip()
+    has_newline = "\n" in url
+    has_tab = "\t" in url
+    has_surrounding_quotes = (
+        (url.startswith('"') and url.endswith('"'))
+        or (url.startswith("'") and url.endswith("'"))
+    )
+    print(f"[CC_DEBUG_DB] raw url length: {len(url)}")
+    print(f"[CC_DEBUG_DB] leading whitespace: {has_leading_ws}")
+    print(f"[CC_DEBUG_DB] trailing whitespace: {has_trailing_ws}")
+    print(f"[CC_DEBUG_DB] embedded newline: {has_newline}")
+    print(f"[CC_DEBUG_DB] embedded tab: {has_tab}")
+    print(f"[CC_DEBUG_DB] surrounding quotes: {has_surrounding_quotes}")
+
+    try:
+        parsed = urllib.parse.urlparse(url)
+        password = parsed.password or ""
+        non_alnum = any(not c.isalnum() for c in password)
+        print(f"[CC_DEBUG_DB] scheme: {parsed.scheme}")
+        print(f"[CC_DEBUG_DB] hostname: {parsed.hostname}")
+        print(f"[CC_DEBUG_DB] port: {parsed.port}")
+        print(f"[CC_DEBUG_DB] username: {parsed.username}")
+        print(f"[CC_DEBUG_DB] path: {parsed.path}")
+        print(f"[CC_DEBUG_DB] password length: {len(password)}")
+        print(f"[CC_DEBUG_DB] password has non-alphanumeric: {non_alnum}")
+    except Exception as exc:
+        print(f"[CC_DEBUG_DB] urlparse failed: {type(exc).__name__}")
+
 
 def _get_database_url():
+    source = "NOT FOUND"
+    url = None
     try:
         url = st.secrets.get("DATABASE_URL")
         if url:
-            return url
+            source = "st.secrets"
     except Exception:
         pass
-    url = os.environ.get("DATABASE_URL")
     if not url:
+        url = os.environ.get("DATABASE_URL")
+        if url:
+            source = "os.environ"
+    if not url:
+        _log_connection_diagnostics("", source)
         raise RuntimeError(
             "DATABASE_URL not found in st.secrets or environment variables"
         )
+    _log_connection_diagnostics(url, source)
     return url
 
 def _get_pool():
     global _pool
     if _pool is None:
-        _pool = psycopg2.pool.SimpleConnectionPool(
-            minconn=1, maxconn=10,
-            dsn=_get_database_url()
-        )
+        try:
+            _pool = psycopg2.pool.SimpleConnectionPool(
+                minconn=1, maxconn=10,
+                dsn=_get_database_url()
+            )
+        except psycopg2.OperationalError as exc:
+            _handle_pool_error(exc)
     return _pool
+
+
+def _handle_pool_error(exc: psycopg2.OperationalError) -> None:
+    """Translate a psycopg2 connection error into a clean Streamlit page halt.
+
+    Logs the full error to stdout (psycopg2 connection errors do not contain
+    the password — only host/port/error code), then renders a user-friendly
+    message via st.error() and stops the page render with st.stop().
+    Never lets the raw traceback reach the user.
+    """
+    err_text = str(exc)
+    print(f"[CC_DB_ERROR] psycopg2.OperationalError: {err_text}")
+
+    if "ECIRCUITBREAKER" in err_text:
+        message = (
+            "The database is temporarily blocking connections after repeated "
+            "failed authentication attempts. Please wait 15 to 30 minutes, "
+            "then refresh this page."
+        )
+    elif "ENOTFOUND" in err_text:
+        message = "Database project not found. Please contact the coordinator."
+    elif "password authentication failed" in err_text:
+        message = "Database authentication failed. Please contact the coordinator."
+    else:
+        message = "Database connection unavailable. Please try again in a few minutes."
+
+    try:
+        st.error(message)
+    except Exception:
+        # Outside a Streamlit script context (e.g., reset_password.py CLI).
+        # Re-raise the original psycopg2 error so the CLI sees the real cause.
+        raise exc
+    st.stop()
 
 def get_connection():
     return _get_pool().getconn()
