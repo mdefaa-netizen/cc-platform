@@ -6,7 +6,7 @@ echo.
 echo Once started, open your browser and go to:
 echo    localhost:8501
 echo.
-echo Password: nhhumanities2025
+echo Password: see .streamlit/secrets.toml (APP_PASSWORD)
 echo.
 python -m streamlit run app.py
 pause
