@@ -132,10 +132,31 @@ def _get_database_url():
 def _get_pool():
     global _pool
     if _pool is None:
+        url = _get_database_url()
+        parsed = urllib.parse.urlparse(url)
+        # urlparse() returns username/password percent-decoded on Python 3.6+
+        username = parsed.username or ''
+        password = parsed.password or ''
+        hostname = parsed.hostname or ''
+        port = parsed.port or 5432
+        dbname = (parsed.path or '/postgres').lstrip('/')
+        if _debug_enabled():
+            print(
+                f"[CC_DEBUG_DB] connecting with "
+                f"user={username!r} host={hostname!r} port={port} "
+                f"dbname={dbname!r} pwlen={len(password)}",
+                flush=True,
+            )
         try:
             _pool = psycopg2.pool.SimpleConnectionPool(
                 minconn=1, maxconn=10,
-                dsn=_get_database_url()
+                host=hostname,
+                port=port,
+                user=username,
+                password=password,
+                dbname=dbname,
+                sslmode='require',
+                connect_timeout=10,
             )
         except psycopg2.OperationalError as exc:
             _handle_pool_error(exc)
