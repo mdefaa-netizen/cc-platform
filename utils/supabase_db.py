@@ -45,17 +45,31 @@ _pool = None
 _diagnostics_logged = False
 
 
+def _debug_enabled() -> bool:
+    """Return True when CC_DEBUG_DB=1 is set in either os.environ or st.secrets.
+
+    Streamlit Cloud puts secrets.toml entries in st.secrets, NOT os.environ —
+    so a flag set in the Secrets panel only fires when we look in both places.
+    """
+    if os.environ.get("CC_DEBUG_DB") == "1":
+        return True
+    try:
+        return str(st.secrets.get("CC_DEBUG_DB", "")) == "1"
+    except Exception:
+        return False
+
+
 def _log_connection_diagnostics(url: str, source: str) -> None:
     """Print non-sensitive DATABASE_URL diagnostics to stdout.
 
-    Gated by env var CC_DEBUG_DB=1. Runs at most once per process.
-    Never logs the password itself or the full URL — only derived facts
-    (length, character class, source, parsed components).
+    Gated by CC_DEBUG_DB=1 (env var or st.secrets). Runs at most once per
+    process. Never logs the password itself or the full URL — only derived
+    facts (length, character class, source, parsed components).
     """
     global _diagnostics_logged
     if _diagnostics_logged:
         return
-    if os.environ.get("CC_DEBUG_DB") != "1":
+    if not _debug_enabled():
         return
     _diagnostics_logged = True
 
@@ -154,6 +168,9 @@ def _handle_pool_error(exc: psycopg2.OperationalError) -> None:
 
     try:
         st.error(message)
+        if _debug_enabled():
+            with st.expander("Show technical details (CC_DEBUG_DB enabled)"):
+                st.code(err_text, language="text")
     except Exception:
         # Outside a Streamlit script context (e.g., reset_password.py CLI).
         # Re-raise the original psycopg2 error so the CLI sees the real cause.
