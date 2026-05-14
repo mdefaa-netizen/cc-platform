@@ -10,6 +10,7 @@ from utils.database import (
 )
 from utils.auth import require_auth, render_sidebar_user
 from utils.styles import inject_css, page_header
+from utils.format_helpers import format_date
 
 st.set_page_config(page_title="Events · CC Platform", page_icon="📅", layout="wide")
 inject_css()
@@ -82,14 +83,14 @@ with tab_list:
         for e in filtered:
             badge = {"Scheduled":"🔵","Completed":"🟢","Cancelled":"🔴"}.get(e.get("status",""),"⚪")
             att   = str(e.get("attendance_count") or "—")
-            rows.append(f"| {e['event_name']} | {e['event_date']} | {e.get('city','')} | "
+            rows.append(f"| {e['event_name']} | {format_date(e['event_date'])} | {e.get('city','')} | "
                         f"{e.get('host_name','—')} | {e.get('facilitator_names','—')} | "
                         f"{badge} {e.get('status','')} | {att} |")
         st.markdown("\n".join(rows))
         st.caption(f"Showing {len(filtered)} of {len(events)} events")
 
         if _is_coord:
-            event_names = {e["event_id"]: f"{e['event_name']} ({e['event_date']})" for e in filtered}
+            event_names = {e["event_id"]: f"{e['event_name']} ({format_date(e['event_date'])})" for e in filtered}
             sel_id = st.selectbox("Select event to edit/view",
                                   options=["—"] + list(event_names.keys()),
                                   format_func=lambda x: "— Select —" if x=="—" else event_names[x])
@@ -152,7 +153,7 @@ if _is_coord and tab_add:
 if _is_coord and tab_edit:
     with tab_edit:
         events_all   = get_all_events()
-        edit_options = {e["event_id"]: f"{e['event_name']} ({e['event_date']})" for e in events_all}
+        edit_options = {e["event_id"]: f"{e['event_name']} ({format_date(e['event_date'])})" for e in events_all}
         default_edit = st.session_state.get("edit_event_id", "")
 
         sel_edit = st.selectbox("Select event to edit",
@@ -257,7 +258,7 @@ if _is_coord and tab_edit:
 # ── View Details ───────────────────────────────────────────────────────────────
 with tab_view:
     events_all2  = get_all_events()
-    view_options = {e["event_id"]: f"{e['event_name']} ({e['event_date']})" for e in events_all2}
+    view_options = {e["event_id"]: f"{e['event_name']} ({format_date(e['event_date'])})" for e in events_all2}
     sel_view     = st.selectbox("Select event to view",
                                 options=[""] + list(view_options.keys()),
                                 format_func=lambda x: "— Select —" if x=="" else view_options[x])
@@ -271,7 +272,7 @@ with tab_view:
         st.markdown(f"""
         <div class='section-box'>
             <h2 style='margin:0 0 0.5rem'>{ev['event_name']}</h2>
-            <p style='color:#7F8C8D;margin:0'>{ev.get('event_date','')}
+            <p style='color:#7F8C8D;margin:0'>{format_date(ev.get('event_date',''))}
             {('· '+ev['event_time']) if ev.get('event_time') else ''} · {ev.get('city','')}, NH</p>
         </div>""", unsafe_allow_html=True)
 
