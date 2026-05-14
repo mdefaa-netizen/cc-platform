@@ -152,7 +152,7 @@ if tab_add:
                     log_activity("Facilitator Added", f"{name} — {spec}")
                     add_notification(f"New facilitator added: {name}", "all")
                     st.success(f"Facilitator '{name}' added!")
-                    st.info("To grant this facilitator a login account, go to 👥 User Admin.")
+                    st.info("To grant this facilitator portal login access, go to 🔑 Portal Access.")
                     st.rerun()
 
 if tab_edit:

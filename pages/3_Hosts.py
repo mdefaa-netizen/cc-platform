@@ -138,7 +138,7 @@ if tab_add:
                     log_activity("Host Added", f"{name} — {venue}, {city}")
                     add_notification(f"New host added: {name}", "all")
                     st.success(f"✅ Host '{name}' added!")
-                    st.info("To grant this host a login account, go to 👥 User Admin.")
+                    st.info("To grant this host portal login access, go to 🔑 Portal Access.")
                     st.rerun()
 
 if tab_edit:
