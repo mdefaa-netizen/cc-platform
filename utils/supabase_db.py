@@ -440,6 +440,8 @@ def create_user(email, password_hash, role, full_name=""):
         return new_id
     finally:
         _putconn(conn)
+    return True
+
 
 
 def list_users():
@@ -459,6 +461,8 @@ def update_user_role(user_id, role):
         conn.commit()
     finally:
         _putconn(conn)
+    return True
+
 
 
 def set_user_active(user_id, is_active):
@@ -469,6 +473,8 @@ def set_user_active(user_id, is_active):
         conn.commit()
     finally:
         _putconn(conn)
+    return True
+
 
 
 def reset_user_password(email, new_password_hash):
@@ -479,6 +485,8 @@ def reset_user_password(email, new_password_hash):
         conn.commit()
     finally:
         _putconn(conn)
+    return True
+
 
 
 def init_db():
@@ -780,6 +788,8 @@ def add_host(data):
           data.get("email"), data.get("phone"), data.get("check_payable_to"),
           data.get("payment_amount", 0), data.get("payment_status", "Pending"),
           data.get("notes")))
+    return True
+
 
 
 def update_host(host_id, data):
@@ -794,11 +804,15 @@ def update_host(host_id, data):
           data.get("email"), data.get("phone"), data.get("check_payable_to"),
           data.get("payment_amount", 0), data.get("payment_status"),
           data.get("payment_date"), data.get("notes"), host_id))
+    return True
+
 
 
 def delete_host(host_id):
     conn = get_connection()
     _execute(conn, "DELETE FROM hosts WHERE host_id=%s", (host_id,))
+    return True
+
 
 
 def get_host_events(host_id):
@@ -833,6 +847,8 @@ def add_facilitator(data):
           data.get("zip_code"), data.get("check_payable_to"),
           data.get("payment_amount", 0), data.get("payment_status", "Pending"),
           data.get("specialization"), data.get("notes")))
+    return True
+
 
 
 def update_facilitator(fac_id, data):
@@ -847,11 +863,15 @@ def update_facilitator(fac_id, data):
           data.get("check_payable_to"), data.get("payment_amount", 0),
           data.get("payment_status"), data.get("payment_date"),
           data.get("specialization"), data.get("notes"), fac_id))
+    return True
+
 
 
 def delete_facilitator(fac_id):
     conn = get_connection()
     _execute(conn, "DELETE FROM facilitators WHERE facilitator_id=%s", (fac_id,))
+    return True
+
 
 
 def get_facilitator_events(fac_id):
@@ -883,6 +903,8 @@ def add_nhh(data):
         VALUES (%s,%s,%s,%s,%s,%s)
     """, (data["name"], data.get("title"), data.get("email"),
           data.get("phone"), data.get("role"), data.get("notes")))
+    return True
+
 
 
 def update_nhh(nhh_id, data):
@@ -893,14 +915,18 @@ def update_nhh(nhh_id, data):
         WHERE nhh_id=%s
     """, (data["name"], data.get("title"), data.get("email"),
           data.get("phone"), data.get("role"), data.get("notes"), nhh_id))
+    return True
+
 
 
 def delete_nhh(nhh_id):
     conn = get_connection()
     _execute(conn, "DELETE FROM nhh_colleagues WHERE nhh_id=%s", (nhh_id,))
+    return True
 
 
 # ── CDFA Colleagues ───────────────────────────────────────────────────────────
+
 
 def get_all_cdfa():
     conn = get_connection()
@@ -919,6 +945,8 @@ def add_cdfa(data):
         VALUES (%s,%s,%s,%s,%s,%s)
     """, (data["name"], data.get("title"), data.get("email"),
           data.get("phone"), data.get("role"), data.get("notes")))
+    return True
+
 
 
 def update_cdfa(cdfa_id, data):
@@ -929,14 +957,18 @@ def update_cdfa(cdfa_id, data):
         WHERE cdfa_id=%s
     """, (data["name"], data.get("title"), data.get("email"),
           data.get("phone"), data.get("role"), data.get("notes"), cdfa_id))
+    return True
+
 
 
 def delete_cdfa(cdfa_id):
     conn = get_connection()
     _execute(conn, "DELETE FROM cdfa_colleagues WHERE cdfa_id=%s", (cdfa_id,))
+    return True
 
 
 # ── Events ────────────────────────────────────────────────────────────────────
+
 
 def get_all_events():
     conn = get_connection()
@@ -978,6 +1010,8 @@ def add_event(data, facilitator_ids=None):
         return event_id
     finally:
         _putconn(conn)
+    return True
+
 
 
 def update_event(event_id, data, facilitator_ids=None):
@@ -1003,6 +1037,8 @@ def update_event(event_id, data, facilitator_ids=None):
         conn.commit()
     finally:
         _putconn(conn)
+    return True
+
 
 
 def delete_event(event_id):
@@ -1014,6 +1050,8 @@ def delete_event(event_id):
         conn.commit()
     finally:
         _putconn(conn)
+    return True
+
 
 
 def get_event_facilitators(event_id):
@@ -1064,9 +1102,11 @@ def add_communication(data):
     """, (data.get("recipient_type"), data.get("recipient_id"), data.get("event_id"),
           data.get("communication_type"), data.get("subject"), data.get("body"),
           data.get("sent_by", "Coordinator"), data.get("notes")))
+    return True
 
 
 # ── Tasks ─────────────────────────────────────────────────────────────────────
+
 
 def get_all_tasks():
     conn = get_connection()
@@ -1087,6 +1127,8 @@ def add_task(data):
           data.get("due_date"), data.get("priority", "Medium"),
           data.get("status", "Not Started"), data.get("assigned_to", "Coordinator"),
           data.get("notes")))
+    return True
+
 
 
 def update_task(task_id, data):
@@ -1101,11 +1143,15 @@ def update_task(task_id, data):
     """, (data["task_title"], data.get("task_description"), data.get("related_event_id"),
           data.get("due_date"), data.get("priority"), data.get("status"),
           data.get("assigned_to"), completed_date, data.get("notes"), task_id))
+    return True
+
 
 
 def delete_task(task_id):
     conn = get_connection()
     _execute(conn, "DELETE FROM tasks WHERE task_id=%s", (task_id,))
+    return True
+
 
 
 def get_overdue_tasks():
@@ -1134,6 +1180,8 @@ def add_feedback(data):
         VALUES (%s,%s,%s,%s)
     """, (data["event_id"], data.get("participant_name"),
           data.get("feedback_text"), data.get("rating")))
+    return True
+
 
 
 def get_all_feedback():
@@ -1154,6 +1202,8 @@ def log_report(data):
         VALUES (%s,%s,%s,%s)
     """, (data.get("report_type"), data.get("report_name"),
           data.get("file_path"), data.get("notes")))
+    return True
+
 
 
 def get_all_reports():
@@ -1223,6 +1273,8 @@ def log_activity(action: str, details: str, user: str = "Coordinator"):
         conn.commit()
     finally:
         _putconn(conn)
+    return True
+
 
 
 def get_activity_log(limit=50):
@@ -1240,6 +1292,8 @@ def add_notification(message: str, target_role: str = "all", event_id=None):
     _execute(conn, """
         INSERT INTO notifications (message, target_role, event_id) VALUES (%s,%s,%s)
     """, (message, target_role, event_id))
+    return True
+
 
 
 def get_notifications(role="all", unread_only=False):
@@ -1260,6 +1314,8 @@ def mark_notifications_read(role="all"):
         UPDATE notifications SET is_read=1
         WHERE target_role=%s OR target_role='all'
     """, (role,))
+    return True
+
 
 
 def get_unread_count(role="all"):
@@ -1295,6 +1351,8 @@ def add_portal_access(data):
         VALUES (%s,%s,%s,%s,%s,%s)
     """, (data['person_type'], data['person_id'], data['username'],
           hash_password(data['password']), data.get('is_active', 0), data.get('notes', '')))
+    return True
+
 
 
 def update_portal_access(access_id, is_active):
@@ -1304,12 +1362,16 @@ def update_portal_access(access_id, is_active):
         UPDATE portal_access SET is_active=%s, granted_at=CURRENT_TIMESTAMP
         WHERE access_id=%s
     """, (1 if is_active else 0, access_id))
+    return True
+
 
 
 def delete_portal_access(access_id):
     init_portal_access()
     conn = get_connection()
     _execute(conn, "DELETE FROM portal_access WHERE access_id=%s", (access_id,))
+    return True
+
 
 
 def check_portal_login(username, password):
@@ -1340,6 +1402,8 @@ def send_message(data):
     """, (data.get('sender_type'), data.get('sender_id'), data.get('sender_name'),
           data.get('event_id'), data.get('category', 'General'),
           data.get('subject', ''), data.get('body', '')))
+    return True
+
 
 
 def get_all_messages(unread_only=False):
@@ -1359,6 +1423,8 @@ def mark_message_read(message_id):
     init_messages()
     conn = get_connection()
     _execute(conn, "UPDATE messages SET is_read=1 WHERE message_id=%s", (message_id,))
+    return True
+
 
 
 def reply_to_message(message_id, reply_body):
@@ -1368,6 +1434,8 @@ def reply_to_message(message_id, reply_body):
         UPDATE messages SET reply_body=%s, replied_at=CURRENT_TIMESTAMP, is_read=1
         WHERE message_id=%s
     """, (reply_body, message_id))
+    return True
+
 
 
 def get_messages_for_person(sender_type, sender_id):
@@ -1415,6 +1483,8 @@ def add_mileage_reimbursement(data):
           data["distance_miles"], data["round_trip_miles"],
           data.get("rate_per_mile", 0.725), data["reimbursement_amount"],
           data.get("status", "Pending"), data.get("notes", "")))
+    return True
+
 
 
 def get_mileage_reimbursements(facilitator_id=None, event_id=None):
@@ -1441,11 +1511,15 @@ def update_mileage_status(mileage_id, status):
     conn = get_connection()
     _execute(conn, "UPDATE mileage_reimbursements SET status=%s WHERE mileage_id=%s",
              (status, mileage_id))
+    return True
+
 
 
 def delete_mileage_reimbursement(mileage_id):
     conn = get_connection()
     _execute(conn, "DELETE FROM mileage_reimbursements WHERE mileage_id=%s", (mileage_id,))
+    return True
+
 
 
 def get_mileage_total_pending():
