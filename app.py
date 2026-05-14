@@ -15,6 +15,7 @@ except ImportError:
     init_all = None
 from utils.styles import inject_css, page_header
 from utils.auth import require_auth, render_sidebar_user, ensure_bootstrap_coordinator
+from utils.supabase_db import _fetchall
 
 st.set_page_config(
     page_title="Community Conversations Coordinator",
@@ -176,20 +177,18 @@ try:
         _geo_cache[key] = coords
         return coords
 
-    _map_conn = get_connection()
-    _map_rows = _map_conn.execute("""
+    _map_rows = _fetchall(get_connection(), """
         SELECT e.event_id, e.event_name, e.event_date, e.city,
                h.name AS host_name, h.venue_name
         FROM events e
         LEFT JOIN hosts h ON e.host_id = h.host_id
         ORDER BY e.event_date
-    """).fetchall()
-    _fac_rows = _map_conn.execute("""
+    """)
+    _fac_rows = _fetchall(get_connection(), """
         SELECT ef.event_id, f.name AS facilitator_name
         FROM event_facilitators ef
         JOIN facilitators f ON f.facilitator_id = ef.facilitator_id
-    """).fetchall()
-    _map_conn.close()
+    """)
 
     _facs_by_event = {}
     for _fr in _fac_rows:

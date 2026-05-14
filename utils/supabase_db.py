@@ -203,14 +203,17 @@ def get_connection():
 
 
 def _putconn(conn):
-    """Return a connection to the pool."""
+    """Return a connection to the pool. Swallow errors — never recurse."""
+    if conn is None:
+        return
     try:
         _get_pool().putconn(conn)
     except Exception:
-        try:
-            _putconn(conn)
-        except Exception:
-            pass
+        # Pool may have been closed, or conn may already be returned.
+        # Do not retry — retrying caused infinite recursion in the previous
+        # implementation. Silently drop on the floor; the next getconn() will
+        # create a replacement if needed.
+        pass
 
 def _fetchall(conn, query, params=None):
     """Execute a SELECT and return list[dict], then return conn to pool."""
@@ -257,156 +260,158 @@ def init_all():
     if _schema_initialised:
         return
     conn = get_connection()
-    with conn.cursor() as cur:
-        # hosts
-        cur.execute("""CREATE TABLE IF NOT EXISTS hosts (
-            host_id SERIAL PRIMARY KEY, name TEXT NOT NULL, venue_name TEXT,
-            address TEXT, city TEXT, state TEXT DEFAULT 'NH', zip_code TEXT,
-            contact_person TEXT, email TEXT, phone TEXT, check_payable_to TEXT,
-            payment_amount REAL DEFAULT 0, payment_status TEXT DEFAULT 'Pending',
-            payment_date DATE, notes TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
-        # facilitators
-        cur.execute("""CREATE TABLE IF NOT EXISTS facilitators (
-            facilitator_id SERIAL PRIMARY KEY, name TEXT NOT NULL, email TEXT,
-            phone TEXT, address TEXT, city TEXT, state TEXT DEFAULT 'NH',
-            zip_code TEXT, check_payable_to TEXT,
-            payment_amount REAL DEFAULT 0, payment_status TEXT DEFAULT 'Pending',
-            payment_date DATE, specialization TEXT, notes TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
-        # nhh_colleagues
-        cur.execute("""CREATE TABLE IF NOT EXISTS nhh_colleagues (
-            nhh_id SERIAL PRIMARY KEY, name TEXT NOT NULL, title TEXT,
-            email TEXT, phone TEXT, role TEXT, notes TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
-        # cdfa_colleagues
-        cur.execute("""CREATE TABLE IF NOT EXISTS cdfa_colleagues (
-            cdfa_id SERIAL PRIMARY KEY, name TEXT NOT NULL, title TEXT,
-            email TEXT, phone TEXT, role TEXT, notes TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
-        # events
-        cur.execute("""CREATE TABLE IF NOT EXISTS events (
-            event_id SERIAL PRIMARY KEY, event_name TEXT NOT NULL,
-            event_date DATE NOT NULL, event_time TEXT,
-            host_id INTEGER REFERENCES hosts(host_id),
-            venue_address TEXT, city TEXT, status TEXT DEFAULT 'Scheduled',
-            attendance_count INTEGER, attendance_confirmed INTEGER DEFAULT 0,
-            event_summary TEXT,
-            owner_user_id UUID,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
-        # Migration for pre-existing events tables missing owner_user_id.
-        cur.execute("""ALTER TABLE events
-            ADD COLUMN IF NOT EXISTS owner_user_id UUID""")
-        # event_facilitators
-        cur.execute("""CREATE TABLE IF NOT EXISTS event_facilitators (
-            event_facilitator_id SERIAL PRIMARY KEY,
-            event_id INTEGER REFERENCES events(event_id),
-            facilitator_id INTEGER REFERENCES facilitators(facilitator_id))""")
-        # communications
-        cur.execute("""CREATE TABLE IF NOT EXISTS communications (
-            communication_id SERIAL PRIMARY KEY, recipient_type TEXT,
-            recipient_id INTEGER, event_id INTEGER REFERENCES events(event_id),
-            communication_type TEXT, subject TEXT, body TEXT,
-            sent_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            sent_by TEXT DEFAULT 'Coordinator', notes TEXT)""")
-        # tasks
-        cur.execute("""CREATE TABLE IF NOT EXISTS tasks (
-            task_id SERIAL PRIMARY KEY, task_title TEXT NOT NULL,
-            task_description TEXT,
-            related_event_id INTEGER REFERENCES events(event_id),
-            due_date DATE, priority TEXT DEFAULT 'Medium',
-            status TEXT DEFAULT 'Not Started',
-            assigned_to TEXT DEFAULT 'Coordinator',
-            completed_date DATE, notes TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
-        # feedback
-        cur.execute("""CREATE TABLE IF NOT EXISTS feedback (
-            feedback_id SERIAL PRIMARY KEY,
-            event_id INTEGER REFERENCES events(event_id),
-            participant_name TEXT, feedback_text TEXT, rating INTEGER,
-            submitted_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
-        # reports
-        cur.execute("""CREATE TABLE IF NOT EXISTS reports (
-            report_id SERIAL PRIMARY KEY, report_type TEXT, report_name TEXT,
-            generated_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            file_path TEXT, notes TEXT)""")
-        # mileage_reimbursements
-        cur.execute("""CREATE TABLE IF NOT EXISTS mileage_reimbursements (
-            mileage_id SERIAL PRIMARY KEY,
-            facilitator_id INTEGER REFERENCES facilitators(facilitator_id),
-            event_id INTEGER REFERENCES events(event_id),
-            facilitator_address TEXT, event_address TEXT,
-            distance_miles REAL, round_trip_miles REAL,
-            rate_per_mile REAL DEFAULT 0.725, reimbursement_amount REAL,
-            status TEXT DEFAULT 'Pending', notes TEXT,
-            calculated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
-        # portal_access
-        cur.execute("""CREATE TABLE IF NOT EXISTS portal_access (
-            access_id SERIAL PRIMARY KEY, person_type TEXT NOT NULL,
-            person_id INTEGER NOT NULL, username TEXT UNIQUE NOT NULL,
-            password_hash TEXT NOT NULL, is_active INTEGER DEFAULT 0,
-            granted_by TEXT DEFAULT 'Coordinator', granted_at TIMESTAMP,
-            notes TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
-        # activity_log
-        cur.execute("""CREATE TABLE IF NOT EXISTS activity_log (
-            log_id SERIAL PRIMARY KEY, action TEXT NOT NULL, details TEXT,
-            "user" TEXT DEFAULT 'Coordinator',
-            logged_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
-        # messages
-        cur.execute("""CREATE TABLE IF NOT EXISTS messages (
-            message_id SERIAL PRIMARY KEY, sender_type TEXT NOT NULL,
-            sender_id INTEGER, sender_name TEXT,
-            event_id INTEGER REFERENCES events(event_id),
-            category TEXT, subject TEXT, body TEXT NOT NULL,
-            is_read INTEGER DEFAULT 0, replied_at TIMESTAMP,
-            reply_body TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
-        # notifications
-        cur.execute("""CREATE TABLE IF NOT EXISTS notifications (
-            notif_id SERIAL PRIMARY KEY, message TEXT NOT NULL,
-            target_role TEXT DEFAULT 'all', event_id INTEGER,
-            is_read INTEGER DEFAULT 0,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
-        # users (RBAC — email-based)
-        # Drop the legacy username-based table if it exists so the wipe/reseed
-        # migration completes cleanly on first run.
-        cur.execute("""SELECT column_name FROM information_schema.columns
-                        WHERE table_name='users' AND column_name='username'""")
-        if cur.fetchone():
-            cur.execute("DROP TABLE IF EXISTS users CASCADE")
-        cur.execute("""CREATE TABLE IF NOT EXISTS users (
-            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-            email TEXT UNIQUE NOT NULL,
-            password_hash TEXT NOT NULL,
-            role TEXT NOT NULL CHECK (role IN (
-                'coordinator','facilitator','host','cdfa_staff','nhh_staff'
-            )),
-            full_name TEXT,
-            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-            is_active BOOLEAN NOT NULL DEFAULT TRUE)""")
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_users_email ON users (email)")
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_users_role  ON users (role)")
-        # Wire up the FK from events.owner_user_id now that users exists.
-        cur.execute("""DO $$
-            BEGIN
-                IF NOT EXISTS (
-                    SELECT 1 FROM information_schema.table_constraints
-                    WHERE constraint_name = 'events_owner_user_id_fkey'
-                ) THEN
-                    ALTER TABLE events
-                    ADD CONSTRAINT events_owner_user_id_fkey
-                    FOREIGN KEY (owner_user_id) REFERENCES users(id)
-                    ON DELETE SET NULL;
-                END IF;
-            END $$""")
-    conn.commit()
-    _putconn(conn)
-    _schema_initialised = True
+    try:
+        with conn.cursor() as cur:
+            # hosts
+            cur.execute("""CREATE TABLE IF NOT EXISTS hosts (
+                host_id SERIAL PRIMARY KEY, name TEXT NOT NULL, venue_name TEXT,
+                address TEXT, city TEXT, state TEXT DEFAULT 'NH', zip_code TEXT,
+                contact_person TEXT, email TEXT, phone TEXT, check_payable_to TEXT,
+                payment_amount REAL DEFAULT 0, payment_status TEXT DEFAULT 'Pending',
+                payment_date DATE, notes TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
+            # facilitators
+            cur.execute("""CREATE TABLE IF NOT EXISTS facilitators (
+                facilitator_id SERIAL PRIMARY KEY, name TEXT NOT NULL, email TEXT,
+                phone TEXT, address TEXT, city TEXT, state TEXT DEFAULT 'NH',
+                zip_code TEXT, check_payable_to TEXT,
+                payment_amount REAL DEFAULT 0, payment_status TEXT DEFAULT 'Pending',
+                payment_date DATE, specialization TEXT, notes TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
+            # nhh_colleagues
+            cur.execute("""CREATE TABLE IF NOT EXISTS nhh_colleagues (
+                nhh_id SERIAL PRIMARY KEY, name TEXT NOT NULL, title TEXT,
+                email TEXT, phone TEXT, role TEXT, notes TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
+            # cdfa_colleagues
+            cur.execute("""CREATE TABLE IF NOT EXISTS cdfa_colleagues (
+                cdfa_id SERIAL PRIMARY KEY, name TEXT NOT NULL, title TEXT,
+                email TEXT, phone TEXT, role TEXT, notes TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
+            # events
+            cur.execute("""CREATE TABLE IF NOT EXISTS events (
+                event_id SERIAL PRIMARY KEY, event_name TEXT NOT NULL,
+                event_date DATE NOT NULL, event_time TEXT,
+                host_id INTEGER REFERENCES hosts(host_id),
+                venue_address TEXT, city TEXT, status TEXT DEFAULT 'Scheduled',
+                attendance_count INTEGER, attendance_confirmed INTEGER DEFAULT 0,
+                event_summary TEXT,
+                owner_user_id UUID,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
+            # Migration for pre-existing events tables missing owner_user_id.
+            cur.execute("""ALTER TABLE events
+                ADD COLUMN IF NOT EXISTS owner_user_id UUID""")
+            # event_facilitators
+            cur.execute("""CREATE TABLE IF NOT EXISTS event_facilitators (
+                event_facilitator_id SERIAL PRIMARY KEY,
+                event_id INTEGER REFERENCES events(event_id),
+                facilitator_id INTEGER REFERENCES facilitators(facilitator_id))""")
+            # communications
+            cur.execute("""CREATE TABLE IF NOT EXISTS communications (
+                communication_id SERIAL PRIMARY KEY, recipient_type TEXT,
+                recipient_id INTEGER, event_id INTEGER REFERENCES events(event_id),
+                communication_type TEXT, subject TEXT, body TEXT,
+                sent_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                sent_by TEXT DEFAULT 'Coordinator', notes TEXT)""")
+            # tasks
+            cur.execute("""CREATE TABLE IF NOT EXISTS tasks (
+                task_id SERIAL PRIMARY KEY, task_title TEXT NOT NULL,
+                task_description TEXT,
+                related_event_id INTEGER REFERENCES events(event_id),
+                due_date DATE, priority TEXT DEFAULT 'Medium',
+                status TEXT DEFAULT 'Not Started',
+                assigned_to TEXT DEFAULT 'Coordinator',
+                completed_date DATE, notes TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
+            # feedback
+            cur.execute("""CREATE TABLE IF NOT EXISTS feedback (
+                feedback_id SERIAL PRIMARY KEY,
+                event_id INTEGER REFERENCES events(event_id),
+                participant_name TEXT, feedback_text TEXT, rating INTEGER,
+                submitted_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
+            # reports
+            cur.execute("""CREATE TABLE IF NOT EXISTS reports (
+                report_id SERIAL PRIMARY KEY, report_type TEXT, report_name TEXT,
+                generated_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                file_path TEXT, notes TEXT)""")
+            # mileage_reimbursements
+            cur.execute("""CREATE TABLE IF NOT EXISTS mileage_reimbursements (
+                mileage_id SERIAL PRIMARY KEY,
+                facilitator_id INTEGER REFERENCES facilitators(facilitator_id),
+                event_id INTEGER REFERENCES events(event_id),
+                facilitator_address TEXT, event_address TEXT,
+                distance_miles REAL, round_trip_miles REAL,
+                rate_per_mile REAL DEFAULT 0.725, reimbursement_amount REAL,
+                status TEXT DEFAULT 'Pending', notes TEXT,
+                calculated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
+            # portal_access
+            cur.execute("""CREATE TABLE IF NOT EXISTS portal_access (
+                access_id SERIAL PRIMARY KEY, person_type TEXT NOT NULL,
+                person_id INTEGER NOT NULL, username TEXT UNIQUE NOT NULL,
+                password_hash TEXT NOT NULL, is_active INTEGER DEFAULT 0,
+                granted_by TEXT DEFAULT 'Coordinator', granted_at TIMESTAMP,
+                notes TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
+            # activity_log
+            cur.execute("""CREATE TABLE IF NOT EXISTS activity_log (
+                log_id SERIAL PRIMARY KEY, action TEXT NOT NULL, details TEXT,
+                "user" TEXT DEFAULT 'Coordinator',
+                logged_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
+            # messages
+            cur.execute("""CREATE TABLE IF NOT EXISTS messages (
+                message_id SERIAL PRIMARY KEY, sender_type TEXT NOT NULL,
+                sender_id INTEGER, sender_name TEXT,
+                event_id INTEGER REFERENCES events(event_id),
+                category TEXT, subject TEXT, body TEXT NOT NULL,
+                is_read INTEGER DEFAULT 0, replied_at TIMESTAMP,
+                reply_body TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
+            # notifications
+            cur.execute("""CREATE TABLE IF NOT EXISTS notifications (
+                notif_id SERIAL PRIMARY KEY, message TEXT NOT NULL,
+                target_role TEXT DEFAULT 'all', event_id INTEGER,
+                is_read INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
+            # users (RBAC — email-based)
+            # Drop the legacy username-based table if it exists so the wipe/reseed
+            # migration completes cleanly on first run.
+            cur.execute("""SELECT column_name FROM information_schema.columns
+                            WHERE table_name='users' AND column_name='username'""")
+            if cur.fetchone():
+                cur.execute("DROP TABLE IF EXISTS users CASCADE")
+            cur.execute("""CREATE TABLE IF NOT EXISTS users (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                email TEXT UNIQUE NOT NULL,
+                password_hash TEXT NOT NULL,
+                role TEXT NOT NULL CHECK (role IN (
+                    'coordinator','facilitator','host','cdfa_staff','nhh_staff'
+                )),
+                full_name TEXT,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                is_active BOOLEAN NOT NULL DEFAULT TRUE)""")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_users_email ON users (email)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_users_role  ON users (role)")
+            # Wire up the FK from events.owner_user_id now that users exists.
+            cur.execute("""DO $$
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM information_schema.table_constraints
+                        WHERE constraint_name = 'events_owner_user_id_fkey'
+                    ) THEN
+                        ALTER TABLE events
+                        ADD CONSTRAINT events_owner_user_id_fkey
+                        FOREIGN KEY (owner_user_id) REFERENCES users(id)
+                        ON DELETE SET NULL;
+                    END IF;
+                END $$""")
+        conn.commit()
+        _schema_initialised = True
+    finally:
+        _putconn(conn)
 
 
 # ── Users (RBAC) ──────────────────────────────────────────────────────────────
@@ -480,149 +485,151 @@ def init_db():
     if _schema_initialised:
         return
     conn = get_connection()
-    with conn.cursor() as cur:
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS hosts (
-                host_id SERIAL PRIMARY KEY,
-                name TEXT NOT NULL,
-                venue_name TEXT,
-                address TEXT,
-                city TEXT,
-                state TEXT DEFAULT 'NH',
-                zip_code TEXT,
-                contact_person TEXT,
-                email TEXT,
-                phone TEXT,
-                check_payable_to TEXT,
-                payment_amount REAL DEFAULT 0,
-                payment_status TEXT DEFAULT 'Pending',
-                payment_date DATE,
-                notes TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS facilitators (
-                facilitator_id SERIAL PRIMARY KEY,
-                name TEXT NOT NULL,
-                email TEXT,
-                phone TEXT,
-                address TEXT,
-                city TEXT,
-                state TEXT DEFAULT 'NH',
-                zip_code TEXT,
-                check_payable_to TEXT,
-                payment_amount REAL DEFAULT 0,
-                payment_status TEXT DEFAULT 'Pending',
-                payment_date DATE,
-                specialization TEXT,
-                notes TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS nhh_colleagues (
-                nhh_id SERIAL PRIMARY KEY,
-                name TEXT NOT NULL,
-                title TEXT,
-                email TEXT,
-                phone TEXT,
-                role TEXT,
-                notes TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS cdfa_colleagues (
-                cdfa_id SERIAL PRIMARY KEY,
-                name TEXT NOT NULL,
-                title TEXT,
-                email TEXT,
-                phone TEXT,
-                role TEXT,
-                notes TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS events (
-                event_id SERIAL PRIMARY KEY,
-                event_name TEXT NOT NULL,
-                event_date DATE NOT NULL,
-                event_time TEXT,
-                host_id INTEGER REFERENCES hosts(host_id),
-                venue_address TEXT,
-                city TEXT,
-                status TEXT DEFAULT 'Scheduled',
-                attendance_count INTEGER,
-                attendance_confirmed INTEGER DEFAULT 0,
-                event_summary TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS event_facilitators (
-                event_facilitator_id SERIAL PRIMARY KEY,
-                event_id INTEGER REFERENCES events(event_id),
-                facilitator_id INTEGER REFERENCES facilitators(facilitator_id)
-            )
-        """)
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS communications (
-                communication_id SERIAL PRIMARY KEY,
-                recipient_type TEXT,
-                recipient_id INTEGER,
-                event_id INTEGER REFERENCES events(event_id),
-                communication_type TEXT,
-                subject TEXT,
-                body TEXT,
-                sent_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                sent_by TEXT DEFAULT 'Coordinator',
-                notes TEXT
-            )
-        """)
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS tasks (
-                task_id SERIAL PRIMARY KEY,
-                task_title TEXT NOT NULL,
-                task_description TEXT,
-                related_event_id INTEGER REFERENCES events(event_id),
-                due_date DATE,
-                priority TEXT DEFAULT 'Medium',
-                status TEXT DEFAULT 'Not Started',
-                assigned_to TEXT DEFAULT 'Coordinator',
-                completed_date DATE,
-                notes TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS feedback (
-                feedback_id SERIAL PRIMARY KEY,
-                event_id INTEGER REFERENCES events(event_id),
-                participant_name TEXT,
-                feedback_text TEXT,
-                rating INTEGER,
-                submitted_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS reports (
-                report_id SERIAL PRIMARY KEY,
-                report_type TEXT,
-                report_name TEXT,
-                generated_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                file_path TEXT,
-                notes TEXT
-            )
-        """)
-    conn.commit()
-    _putconn(conn)
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS hosts (
+                    host_id SERIAL PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    venue_name TEXT,
+                    address TEXT,
+                    city TEXT,
+                    state TEXT DEFAULT 'NH',
+                    zip_code TEXT,
+                    contact_person TEXT,
+                    email TEXT,
+                    phone TEXT,
+                    check_payable_to TEXT,
+                    payment_amount REAL DEFAULT 0,
+                    payment_status TEXT DEFAULT 'Pending',
+                    payment_date DATE,
+                    notes TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS facilitators (
+                    facilitator_id SERIAL PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    email TEXT,
+                    phone TEXT,
+                    address TEXT,
+                    city TEXT,
+                    state TEXT DEFAULT 'NH',
+                    zip_code TEXT,
+                    check_payable_to TEXT,
+                    payment_amount REAL DEFAULT 0,
+                    payment_status TEXT DEFAULT 'Pending',
+                    payment_date DATE,
+                    specialization TEXT,
+                    notes TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS nhh_colleagues (
+                    nhh_id SERIAL PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    title TEXT,
+                    email TEXT,
+                    phone TEXT,
+                    role TEXT,
+                    notes TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS cdfa_colleagues (
+                    cdfa_id SERIAL PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    title TEXT,
+                    email TEXT,
+                    phone TEXT,
+                    role TEXT,
+                    notes TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS events (
+                    event_id SERIAL PRIMARY KEY,
+                    event_name TEXT NOT NULL,
+                    event_date DATE NOT NULL,
+                    event_time TEXT,
+                    host_id INTEGER REFERENCES hosts(host_id),
+                    venue_address TEXT,
+                    city TEXT,
+                    status TEXT DEFAULT 'Scheduled',
+                    attendance_count INTEGER,
+                    attendance_confirmed INTEGER DEFAULT 0,
+                    event_summary TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS event_facilitators (
+                    event_facilitator_id SERIAL PRIMARY KEY,
+                    event_id INTEGER REFERENCES events(event_id),
+                    facilitator_id INTEGER REFERENCES facilitators(facilitator_id)
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS communications (
+                    communication_id SERIAL PRIMARY KEY,
+                    recipient_type TEXT,
+                    recipient_id INTEGER,
+                    event_id INTEGER REFERENCES events(event_id),
+                    communication_type TEXT,
+                    subject TEXT,
+                    body TEXT,
+                    sent_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    sent_by TEXT DEFAULT 'Coordinator',
+                    notes TEXT
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS tasks (
+                    task_id SERIAL PRIMARY KEY,
+                    task_title TEXT NOT NULL,
+                    task_description TEXT,
+                    related_event_id INTEGER REFERENCES events(event_id),
+                    due_date DATE,
+                    priority TEXT DEFAULT 'Medium',
+                    status TEXT DEFAULT 'Not Started',
+                    assigned_to TEXT DEFAULT 'Coordinator',
+                    completed_date DATE,
+                    notes TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS feedback (
+                    feedback_id SERIAL PRIMARY KEY,
+                    event_id INTEGER REFERENCES events(event_id),
+                    participant_name TEXT,
+                    feedback_text TEXT,
+                    rating INTEGER,
+                    submitted_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS reports (
+                    report_id SERIAL PRIMARY KEY,
+                    report_type TEXT,
+                    report_name TEXT,
+                    generated_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    file_path TEXT,
+                    notes TEXT
+                )
+            """)
+        conn.commit()
+    finally:
+        _putconn(conn)
 
 
 # Legacy username-based user helpers removed — see the RBAC section above
@@ -634,110 +641,120 @@ def init_mileage():
     if _schema_initialised:
         return
     conn = get_connection()
-    with conn.cursor() as cur:
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS mileage_reimbursements (
-                mileage_id SERIAL PRIMARY KEY,
-                facilitator_id INTEGER REFERENCES facilitators(facilitator_id),
-                event_id INTEGER REFERENCES events(event_id),
-                facilitator_address TEXT,
-                event_address TEXT,
-                distance_miles REAL,
-                round_trip_miles REAL,
-                rate_per_mile REAL DEFAULT 0.725,
-                reimbursement_amount REAL,
-                status TEXT DEFAULT 'Pending',
-                notes TEXT,
-                calculated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-    conn.commit()
-    _putconn(conn)
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS mileage_reimbursements (
+                    mileage_id SERIAL PRIMARY KEY,
+                    facilitator_id INTEGER REFERENCES facilitators(facilitator_id),
+                    event_id INTEGER REFERENCES events(event_id),
+                    facilitator_address TEXT,
+                    event_address TEXT,
+                    distance_miles REAL,
+                    round_trip_miles REAL,
+                    rate_per_mile REAL DEFAULT 0.725,
+                    reimbursement_amount REAL,
+                    status TEXT DEFAULT 'Pending',
+                    notes TEXT,
+                    calculated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+        conn.commit()
+    finally:
+        _putconn(conn)
 
 
 def init_portal_access():
     if _schema_initialised:
         return
     conn = get_connection()
-    with conn.cursor() as cur:
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS portal_access (
-                access_id   SERIAL PRIMARY KEY,
-                person_type TEXT NOT NULL,
-                person_id   INTEGER NOT NULL,
-                username    TEXT UNIQUE NOT NULL,
-                password_hash TEXT NOT NULL,
-                is_active   INTEGER DEFAULT 0,
-                granted_by  TEXT DEFAULT 'Coordinator',
-                granted_at  TIMESTAMP,
-                notes       TEXT,
-                created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-    conn.commit()
-    _putconn(conn)
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS portal_access (
+                    access_id   SERIAL PRIMARY KEY,
+                    person_type TEXT NOT NULL,
+                    person_id   INTEGER NOT NULL,
+                    username    TEXT UNIQUE NOT NULL,
+                    password_hash TEXT NOT NULL,
+                    is_active   INTEGER DEFAULT 0,
+                    granted_by  TEXT DEFAULT 'Coordinator',
+                    granted_at  TIMESTAMP,
+                    notes       TEXT,
+                    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+        conn.commit()
+    finally:
+        _putconn(conn)
 
 
 def init_activity_log():
     if _schema_initialised:
         return
     conn = get_connection()
-    with conn.cursor() as cur:
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS activity_log (
-                log_id SERIAL PRIMARY KEY,
-                action TEXT NOT NULL,
-                details TEXT,
-                "user" TEXT DEFAULT 'Coordinator',
-                logged_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-    conn.commit()
-    _putconn(conn)
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS activity_log (
+                    log_id SERIAL PRIMARY KEY,
+                    action TEXT NOT NULL,
+                    details TEXT,
+                    "user" TEXT DEFAULT 'Coordinator',
+                    logged_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+        conn.commit()
+    finally:
+        _putconn(conn)
 
 
 def init_messages():
     if _schema_initialised:
         return
     conn = get_connection()
-    with conn.cursor() as cur:
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS messages (
-                message_id   SERIAL PRIMARY KEY,
-                sender_type  TEXT NOT NULL,
-                sender_id    INTEGER,
-                sender_name  TEXT,
-                event_id     INTEGER REFERENCES events(event_id),
-                category     TEXT,
-                subject      TEXT,
-                body         TEXT NOT NULL,
-                is_read      INTEGER DEFAULT 0,
-                replied_at   TIMESTAMP,
-                reply_body   TEXT,
-                created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-    conn.commit()
-    _putconn(conn)
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS messages (
+                    message_id   SERIAL PRIMARY KEY,
+                    sender_type  TEXT NOT NULL,
+                    sender_id    INTEGER,
+                    sender_name  TEXT,
+                    event_id     INTEGER REFERENCES events(event_id),
+                    category     TEXT,
+                    subject      TEXT,
+                    body         TEXT NOT NULL,
+                    is_read      INTEGER DEFAULT 0,
+                    replied_at   TIMESTAMP,
+                    reply_body   TEXT,
+                    created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+        conn.commit()
+    finally:
+        _putconn(conn)
 
 
 def _ensure_notifications():
     if _schema_initialised:
         return
     conn = get_connection()
-    with conn.cursor() as cur:
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS notifications (
-                notif_id SERIAL PRIMARY KEY,
-                message TEXT NOT NULL,
-                target_role TEXT DEFAULT 'all',
-                event_id INTEGER,
-                is_read INTEGER DEFAULT 0,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-    conn.commit()
-    _putconn(conn)
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS notifications (
+                    notif_id SERIAL PRIMARY KEY,
+                    message TEXT NOT NULL,
+                    target_role TEXT DEFAULT 'all',
+                    event_id INTEGER,
+                    is_read INTEGER DEFAULT 0,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+        conn.commit()
+    finally:
+        _putconn(conn)
 
 
 # ── Hosts ─────────────────────────────────────────────────────────────────────
@@ -943,54 +960,60 @@ def get_event(event_id):
 
 def add_event(data, facilitator_ids=None):
     conn = get_connection()
-    with conn.cursor() as cur:
-        cur.execute("""
-            INSERT INTO events (event_name,event_date,event_time,host_id,venue_address,city,status)
-            VALUES (%s,%s,%s,%s,%s,%s,%s) RETURNING event_id
-        """, (data["event_name"], data["event_date"], data.get("event_time"),
-              data.get("host_id"), data.get("venue_address"), data.get("city"),
-              data.get("status", "Scheduled")))
-        event_id = cur.fetchone()[0]
-        if facilitator_ids:
-            for fid in facilitator_ids:
-                cur.execute(
-                    "INSERT INTO event_facilitators (event_id,facilitator_id) VALUES (%s,%s)",
-                    (event_id, fid))
-    conn.commit()
-    _putconn(conn)
-    return event_id
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO events (event_name,event_date,event_time,host_id,venue_address,city,status)
+                VALUES (%s,%s,%s,%s,%s,%s,%s) RETURNING event_id
+            """, (data["event_name"], data["event_date"], data.get("event_time"),
+                  data.get("host_id"), data.get("venue_address"), data.get("city"),
+                  data.get("status", "Scheduled")))
+            event_id = cur.fetchone()[0]
+            if facilitator_ids:
+                for fid in facilitator_ids:
+                    cur.execute(
+                        "INSERT INTO event_facilitators (event_id,facilitator_id) VALUES (%s,%s)",
+                        (event_id, fid))
+        conn.commit()
+        return event_id
+    finally:
+        _putconn(conn)
 
 
 def update_event(event_id, data, facilitator_ids=None):
     conn = get_connection()
-    with conn.cursor() as cur:
-        cur.execute("""
-            UPDATE events SET event_name=%s,event_date=%s,event_time=%s,host_id=%s,
-                venue_address=%s,city=%s,status=%s,attendance_count=%s,
-                attendance_confirmed=%s,event_summary=%s,updated_at=CURRENT_TIMESTAMP
-            WHERE event_id=%s
-        """, (data["event_name"], data["event_date"], data.get("event_time"),
-              data.get("host_id"), data.get("venue_address"), data.get("city"),
-              data.get("status"), data.get("attendance_count"),
-              1 if data.get("attendance_confirmed") else 0,
-              data.get("event_summary"), event_id))
-        if facilitator_ids is not None:
-            cur.execute("DELETE FROM event_facilitators WHERE event_id=%s", (event_id,))
-            for fid in facilitator_ids:
-                cur.execute(
-                    "INSERT INTO event_facilitators (event_id,facilitator_id) VALUES (%s,%s)",
-                    (event_id, fid))
-    conn.commit()
-    _putconn(conn)
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE events SET event_name=%s,event_date=%s,event_time=%s,host_id=%s,
+                    venue_address=%s,city=%s,status=%s,attendance_count=%s,
+                    attendance_confirmed=%s,event_summary=%s,updated_at=CURRENT_TIMESTAMP
+                WHERE event_id=%s
+            """, (data["event_name"], data["event_date"], data.get("event_time"),
+                  data.get("host_id"), data.get("venue_address"), data.get("city"),
+                  data.get("status"), data.get("attendance_count"),
+                  1 if data.get("attendance_confirmed") else 0,
+                  data.get("event_summary"), event_id))
+            if facilitator_ids is not None:
+                cur.execute("DELETE FROM event_facilitators WHERE event_id=%s", (event_id,))
+                for fid in facilitator_ids:
+                    cur.execute(
+                        "INSERT INTO event_facilitators (event_id,facilitator_id) VALUES (%s,%s)",
+                        (event_id, fid))
+        conn.commit()
+    finally:
+        _putconn(conn)
 
 
 def delete_event(event_id):
     conn = get_connection()
-    with conn.cursor() as cur:
-        cur.execute("DELETE FROM event_facilitators WHERE event_id=%s", (event_id,))
-        cur.execute("DELETE FROM events WHERE event_id=%s", (event_id,))
-    conn.commit()
-    _putconn(conn)
+    try:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM event_facilitators WHERE event_id=%s", (event_id,))
+            cur.execute("DELETE FROM events WHERE event_id=%s", (event_id,))
+        conn.commit()
+    finally:
+        _putconn(conn)
 
 
 def get_event_facilitators(event_id):
@@ -1142,71 +1165,71 @@ def get_all_reports():
 
 def get_dashboard_stats():
     conn = get_connection()
-    stats = {}
-    with conn.cursor() as cur:
-        cur.execute("SELECT COUNT(*) FROM events")
-        stats["total_events"] = cur.fetchone()[0]
-        cur.execute("SELECT COUNT(*) FROM events WHERE status='Scheduled'")
-        stats["scheduled"] = cur.fetchone()[0]
-        cur.execute("SELECT COUNT(*) FROM events WHERE status='Completed'")
-        stats["completed"] = cur.fetchone()[0]
-        cur.execute("SELECT COUNT(*) FROM events WHERE status='Cancelled'")
-        stats["cancelled"] = cur.fetchone()[0]
-        cur.execute("SELECT COUNT(*) FROM hosts")
-        stats["total_hosts"] = cur.fetchone()[0]
-        cur.execute("SELECT COUNT(*) FROM facilitators")
-        stats["total_facilitators"] = cur.fetchone()[0]
-        cur.execute("SELECT COUNT(*) FROM nhh_colleagues")
-        stats["total_nhh"] = cur.fetchone()[0]
-        cur.execute("SELECT COUNT(*) FROM cdfa_colleagues")
-        stats["total_cdfa"] = cur.fetchone()[0]
-        cur.execute("""
-            SELECT COUNT(*), COALESCE(SUM(payment_amount),0)
-            FROM facilitators WHERE payment_status IN ('Pending','Approved','Paid')
-        """)
-        pf = cur.fetchone()
-        stats["pending_payment_count"] = pf[0]
-        stats["pending_payment_total"] = pf[1]
-        cur.execute("""
-            SELECT COUNT(*) FROM tasks
-            WHERE due_date < CURRENT_DATE AND status NOT IN ('Completed')
-        """)
-        stats["overdue_tasks"] = cur.fetchone()[0]
-    _putconn(conn)
-    return stats
+    try:
+        stats = {}
+        with conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) FROM events")
+            stats["total_events"] = cur.fetchone()[0]
+            cur.execute("SELECT COUNT(*) FROM events WHERE status='Scheduled'")
+            stats["scheduled"] = cur.fetchone()[0]
+            cur.execute("SELECT COUNT(*) FROM events WHERE status='Completed'")
+            stats["completed"] = cur.fetchone()[0]
+            cur.execute("SELECT COUNT(*) FROM events WHERE status='Cancelled'")
+            stats["cancelled"] = cur.fetchone()[0]
+            cur.execute("SELECT COUNT(*) FROM hosts")
+            stats["total_hosts"] = cur.fetchone()[0]
+            cur.execute("SELECT COUNT(*) FROM facilitators")
+            stats["total_facilitators"] = cur.fetchone()[0]
+            cur.execute("SELECT COUNT(*) FROM nhh_colleagues")
+            stats["total_nhh"] = cur.fetchone()[0]
+            cur.execute("SELECT COUNT(*) FROM cdfa_colleagues")
+            stats["total_cdfa"] = cur.fetchone()[0]
+            cur.execute("""
+                SELECT COUNT(*), COALESCE(SUM(payment_amount),0)
+                FROM facilitators WHERE payment_status IN ('Pending','Approved','Paid')
+            """)
+            pf = cur.fetchone()
+            stats["pending_payment_count"] = pf[0]
+            stats["pending_payment_total"] = pf[1]
+            cur.execute("""
+                SELECT COUNT(*) FROM tasks
+                WHERE due_date < CURRENT_DATE AND status NOT IN ('Completed')
+            """)
+            stats["overdue_tasks"] = cur.fetchone()[0]
+        return stats
+    finally:
+        _putconn(conn)
 
 
 # ── Activity Log ──────────────────────────────────────────────────────────────
 
 def log_activity(action: str, details: str, user: str = "Coordinator"):
     conn = get_connection()
-    with conn.cursor() as cur:
-        if not _schema_initialised:
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS activity_log (
-                    log_id SERIAL PRIMARY KEY,
-                    action TEXT NOT NULL,
-                    details TEXT,
-                    "user" TEXT DEFAULT 'Coordinator',
-                    logged_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-        cur.execute(
-            'INSERT INTO activity_log (action, details, "user") VALUES (%s,%s,%s)',
-            (action, details, user))
-    conn.commit()
-    _putconn(conn)
+    try:
+        with conn.cursor() as cur:
+            if not _schema_initialised:
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS activity_log (
+                        log_id SERIAL PRIMARY KEY,
+                        action TEXT NOT NULL,
+                        details TEXT,
+                        "user" TEXT DEFAULT 'Coordinator',
+                        logged_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+            cur.execute(
+                'INSERT INTO activity_log (action, details, "user") VALUES (%s,%s,%s)',
+                (action, details, user))
+        conn.commit()
+    finally:
+        _putconn(conn)
 
 
 def get_activity_log(limit=50):
     conn = get_connection()
-    try:
-        return _fetchall(conn, """
-            SELECT * FROM activity_log ORDER BY logged_at DESC LIMIT %s
-        """, (limit,))
-    except Exception:
-        _putconn(conn)
-        return []
+    return _fetchall(conn, """
+        SELECT * FROM activity_log ORDER BY logged_at DESC LIMIT %s
+    """, (limit,))
 
 
 # ── Notifications ─────────────────────────────────────────────────────────────
@@ -1222,28 +1245,21 @@ def add_notification(message: str, target_role: str = "all", event_id=None):
 def get_notifications(role="all", unread_only=False):
     _ensure_notifications()
     conn = get_connection()
-    try:
-        q = "SELECT * FROM notifications WHERE (target_role=%s OR target_role='all')"
-        params = [role]
-        if unread_only:
-            q += " AND is_read=0"
-        q += " ORDER BY created_at DESC LIMIT 30"
-        return _fetchall(conn, q, params)
-    except Exception:
-        _putconn(conn)
-        return []
+    q = "SELECT * FROM notifications WHERE (target_role=%s OR target_role='all')"
+    params = [role]
+    if unread_only:
+        q += " AND is_read=0"
+    q += " ORDER BY created_at DESC LIMIT 30"
+    return _fetchall(conn, q, params)
 
 
 def mark_notifications_read(role="all"):
     _ensure_notifications()
     conn = get_connection()
-    try:
-        _execute(conn, """
-            UPDATE notifications SET is_read=1
-            WHERE target_role=%s OR target_role='all'
-        """, (role,))
-    except Exception:
-        _putconn(conn)
+    _execute(conn, """
+        UPDATE notifications SET is_read=1
+        WHERE target_role=%s OR target_role='all'
+    """, (role,))
 
 
 def get_unread_count(role="all"):
@@ -1375,12 +1391,14 @@ def get_messages_for_person(sender_type, sender_id):
 def get_unread_message_count():
     init_messages()
     conn = get_connection()
-    with conn.cursor() as cur:
-        cur.execute(
-            "SELECT COUNT(*) FROM messages WHERE is_read=0 AND sender_type != 'coordinator'")
-        count = cur.fetchone()[0]
-    _putconn(conn)
-    return count
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT COUNT(*) FROM messages WHERE is_read=0 AND sender_type != 'coordinator'")
+            count = cur.fetchone()[0]
+        return count
+    finally:
+        _putconn(conn)
 
 
 # ── Mileage ───────────────────────────────────────────────────────────────────
@@ -1432,11 +1450,13 @@ def delete_mileage_reimbursement(mileage_id):
 
 def get_mileage_total_pending():
     conn = get_connection()
-    with conn.cursor() as cur:
-        cur.execute("""
-            SELECT COALESCE(SUM(reimbursement_amount),0)
-            FROM mileage_reimbursements WHERE status='Pending'
-        """)
-        val = cur.fetchone()[0]
-    _putconn(conn)
-    return val
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT COALESCE(SUM(reimbursement_amount),0)
+                FROM mileage_reimbursements WHERE status='Pending'
+            """)
+            val = cur.fetchone()[0]
+        return val
+    finally:
+        _putconn(conn)

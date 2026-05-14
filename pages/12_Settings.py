@@ -7,6 +7,7 @@ from utils.database import (log_activity, add_notification, DB_PATH, get_connect
 from utils.auth import require_auth, render_sidebar_user
 from utils.email_utils import get_smtp_config
 from utils.styles import inject_css, page_header
+from utils.supabase_db import _fetchall, _execute
 
 st.set_page_config(page_title="Settings · CC Platform", page_icon="⚙️", layout="wide")
 inject_css()
@@ -125,8 +126,7 @@ with tab_data:
             st.error("Invalid table selection.")
             st.stop()
         conn = get_connection()
-        rows = conn.execute(f"SELECT * FROM {sel_table}").fetchall()
-        conn.close()
+        rows = _fetchall(conn, f"SELECT * FROM {sel_table}")
         if rows:
             buf = io.StringIO()
             csv.writer(buf).writerows([rows[0].keys()] + list(rows))
@@ -145,8 +145,7 @@ with tab_data:
                     st.error("Invalid table selection.")
                     st.stop()
                 conn = get_connection()
-                conn.execute(f"DELETE FROM {sel_clear}")
-                conn.commit(); conn.close()
+                _execute(conn, f"DELETE FROM {sel_clear}")
                 st.success(f"Table '{sel_clear}' cleared.")
             else:
                 st.error("Type CONFIRM to proceed.")
