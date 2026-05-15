@@ -146,8 +146,29 @@ if _is_coord and tab_add:
                         }, facilitator_ids=fac_sel or [])
                         log_activity("Event Created", f"{event_name} on {event_date} in {city}")
                         add_notification(f"New event scheduled: {event_name} on {event_date} in {city}, NH", "all")
-                        st.success(f"✅ Event '{event_name}' created!")
+                        st.session_state["event_just_added"] = {
+                            "name": event_name,
+                            "date": format_date(event_date),
+                        }
                         st.balloons()
+                        st.rerun()
+
+        # Post-save confirmation banner — shown after a successful add
+        if "event_just_added" in st.session_state:
+            info = st.session_state["event_just_added"]
+            st.success(
+                f"✅ Event added: \"{info['name']}\" ({info['date']}). "
+                f"Switch to the **All Events** tab to see it."
+            )
+            colA, colB = st.columns(2)
+            with colA:
+                if st.button("➕ Add Another Event", use_container_width=True, key="add_another_event"):
+                    del st.session_state["event_just_added"]
+                    st.rerun()
+            with colB:
+                if st.button("✓ Done — Back to All Events", use_container_width=True, key="done_back_to_list"):
+                    del st.session_state["event_just_added"]
+                    st.switch_page("pages/2_Events.py")
 
 # ── Edit Event ─────────────────────────────────────────────────────────────────
 if _is_coord and tab_edit:
