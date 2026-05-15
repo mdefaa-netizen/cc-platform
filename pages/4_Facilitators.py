@@ -110,10 +110,8 @@ with tab_list:
 
 if tab_add:
   with tab_add:
-    if st.session_state.get("facilitator_just_added"):
-        st.session_state.pop("facilitator_just_added")
     st.markdown("### Add New Facilitator")
-    with st.form("add_fac_form"):
+    with st.form("add_fac_form", clear_on_submit=True):
         c1, c2 = st.columns(2)
         with c1:
             name   = st.text_input("Full Name *")
@@ -134,16 +132,13 @@ if tab_add:
             pstatus = st.selectbox("Payment Status", ["Pending","Approved","Paid"])
         notes = st.text_area("Notes", height=80)
         if st.form_submit_button("💾 Save Facilitator", use_container_width=True):
-            if st.session_state.get("facilitator_just_added"):
-                pass
-            elif not name:
+            if not name:
                 st.error("Name is required.")
             else:
                 existing = [f for f in get_all_facilitators() if f["name"].lower()==name.lower()]
                 if existing:
                     st.error(f"A facilitator named '{name}' already exists. Use Edit to update.")
                 else:
-                    st.session_state["facilitator_just_added"] = True
                     add_facilitator({"name":name,"email":email,"phone":phone,
                                       "address":address,"city":city,"state":state,"zip_code":zip_code,
                                       "specialization":spec,
@@ -151,9 +146,23 @@ if tab_add:
                                       "payment_status":pstatus,"notes":notes})
                     log_activity("Facilitator Added", f"{name} — {spec}")
                     add_notification(f"New facilitator added: {name}", "all")
-                    st.success(f"Facilitator '{name}' added!")
-                    st.info("To grant this facilitator portal login access, go to 🔑 Portal Access.")
+                    st.session_state["facilitator_just_added"] = {
+                        "name": name,
+                        "city": city,
+                    }
+                    st.balloons()
                     st.rerun()
+
+    # Post-save confirmation banner — shown after a successful add
+    if "facilitator_just_added" in st.session_state:
+        info = st.session_state["facilitator_just_added"]
+        st.success(
+            f"✅ Facilitator added: \"{info['name']}\" ({info['city'] or 'no city'})."
+        )
+        st.info("👉 Click the **All Facilitators** tab above to see the facilitator in the list. To grant portal login access, go to 🔑 Portal Access.")
+        if st.button("➕ Add Another Facilitator", use_container_width=True, key="add_another_facilitator"):
+            del st.session_state["facilitator_just_added"]
+            st.rerun()
 
 if tab_edit:
   with tab_edit:
