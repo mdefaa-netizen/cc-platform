@@ -108,7 +108,7 @@ with tab_list:
 if _is_coord and tab_add:
     with tab_add:
         st.markdown("### Add New Event")
-        with st.form("add_event_form"):
+        with st.form("add_event_form", clear_on_submit=True):
             c1, c2 = st.columns(2)
             with c1:
                 event_name = st.text_input("Event Name *", placeholder="e.g., Portsmouth Community Conversation")
@@ -157,18 +157,12 @@ if _is_coord and tab_add:
         if "event_just_added" in st.session_state:
             info = st.session_state["event_just_added"]
             st.success(
-                f"✅ Event added: \"{info['name']}\" ({info['date']}). "
-                f"Switch to the **All Events** tab to see it."
+                f"✅ Event added: \"{info['name']}\" ({info['date']})."
             )
-            colA, colB = st.columns(2)
-            with colA:
-                if st.button("➕ Add Another Event", use_container_width=True, key="add_another_event"):
-                    del st.session_state["event_just_added"]
-                    st.rerun()
-            with colB:
-                if st.button("✓ Done — Back to All Events", use_container_width=True, key="done_back_to_list"):
-                    del st.session_state["event_just_added"]
-                    st.switch_page("pages/2_Events.py")
+            st.info("👉 Click the **All Events** tab above to see your event in the list.")
+            if st.button("➕ Add Another Event", use_container_width=True, key="add_another_event"):
+                del st.session_state["event_just_added"]
+                st.rerun()
 
 # ── Edit Event ─────────────────────────────────────────────────────────────────
 if _is_coord and tab_edit:
