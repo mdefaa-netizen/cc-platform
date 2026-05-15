@@ -100,10 +100,8 @@ with tab_list:
 
 if tab_add:
   with tab_add:
-    if st.session_state.get("host_just_added"):
-        st.session_state.pop("host_just_added")
     st.markdown("### Add New Host")
-    with st.form("add_host_form"):
+    with st.form("add_host_form", clear_on_submit=True):
         c1, c2 = st.columns(2)
         with c1:
             name    = st.text_input("Organization / Host Name *")
@@ -121,25 +119,36 @@ if tab_add:
             pstatus = st.selectbox("Payment Status", ["Pending","Approved","Paid"])
         notes = st.text_area("Notes", height=80)
         if st.form_submit_button("💾 Save Host", use_container_width=True):
-            if st.session_state.get("host_just_added"):
-                pass
-            elif not name:
+            if not name:
                 st.error("Host name is required.")
             else:
                 existing = [h for h in get_all_hosts() if h["name"].lower()==name.lower()]
                 if existing:
                     st.error(f"A host named '{name}' already exists. Use Edit Host to update it.")
                 else:
-                    st.session_state["host_just_added"] = True
                     add_host({"name":name,"venue_name":venue,"address":address,"city":city,
                                "state":state,"zip_code":zipcode,"contact_person":contact,
                                "email":email,"phone":phone,"check_payable_to":payable,
                                "payment_amount":amount,"payment_status":pstatus,"notes":notes})
                     log_activity("Host Added", f"{name} — {venue}, {city}")
                     add_notification(f"New host added: {name}", "all")
-                    st.success(f"✅ Host '{name}' added!")
-                    st.info("To grant this host portal login access, go to 🔑 Portal Access.")
+                    st.session_state["host_just_added"] = {
+                        "name": name,
+                        "city": city,
+                    }
+                    st.balloons()
                     st.rerun()
+
+    # Post-save confirmation banner — shown after a successful add
+    if "host_just_added" in st.session_state:
+        info = st.session_state["host_just_added"]
+        st.success(
+            f"✅ Host added: \"{info['name']}\" ({info['city'] or 'no city'})."
+        )
+        st.info("👉 Click the **All Hosts** tab above to see the host in the list. To grant portal login access, go to 🔑 Portal Access.")
+        if st.button("➕ Add Another Host", use_container_width=True, key="add_another_host"):
+            del st.session_state["host_just_added"]
+            st.rerun()
 
 if tab_edit:
   with tab_edit:
