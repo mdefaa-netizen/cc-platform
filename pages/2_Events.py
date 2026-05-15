@@ -10,7 +10,7 @@ from utils.database import (
 )
 from utils.auth import require_auth, render_sidebar_user
 from utils.styles import inject_css, page_header
-from utils.format_helpers import format_date
+from utils.format_helpers import format_date, parse_date
 
 st.set_page_config(page_title="Events · CC Platform", page_icon="📅", layout="wide")
 inject_css()
@@ -172,7 +172,7 @@ if _is_coord and tab_edit:
                 with c1:
                     ename  = st.text_input("Event Name *", value=ev.get("event_name",""))
                     edate  = st.date_input("Event Date *",
-                        value=datetime.date.fromisoformat(ev["event_date"]) if ev.get("event_date") else datetime.date.today())
+                        value=parse_date(ev.get("event_date")) or datetime.date.today())
                     etime  = st.text_input("Event Time", value=ev.get("event_time",""))
                     ecity  = st.text_input("City", value=ev.get("city",""))
                 with c2:

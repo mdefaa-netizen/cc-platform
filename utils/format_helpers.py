@@ -45,6 +45,34 @@ def format_date(value: Optional[Union[str, date, datetime]]) -> str:
     return str(value)
 
 
+def parse_date(value: Optional[Union[str, date, datetime]]) -> Optional[date]:
+    """Inverse of format_date(): returns a date object from any input.
+
+    Accepts:
+      - None or ""           -> returns None
+      - datetime.date object -> returned as-is
+      - datetime.datetime    -> .date() extracted
+      - ISO date string      -> parsed via date.fromisoformat()
+      - ISO timestamp string -> first 10 chars parsed via date.fromisoformat()
+
+    Returns a date object or None. Never raises on valid CC Platform data.
+    Use this when reading event_date / payment_date / due_date from the DB
+    and feeding it to st.date_input(value=...).
+    """
+    if value is None or value == "":
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if isinstance(value, str):
+        try:
+            return date.fromisoformat(value[:10])
+        except (ValueError, TypeError):
+            return None
+    return None
+
+
 def format_date_short(value: Optional[Union[str, date, datetime]]) -> str:
     """Short date format for tight columns: 'Jun 27, 2026' instead of 'June 27, 2026'.
 
