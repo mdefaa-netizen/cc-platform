@@ -219,9 +219,9 @@ with tab_send:
                 st.success(f"✅ {success_count} message(s) {action} successfully!")
                 for err in errors:
                     st.warning(f"⚠️ {err}")
-                st.rerun()
-            for err in errors:
-                st.warning(f"⚠️ {err}")
+            else:
+                for err in errors:
+                    st.warning(f"⚠️ {err}")
 
 with tab_log:
     st.markdown("### Communications Log")
