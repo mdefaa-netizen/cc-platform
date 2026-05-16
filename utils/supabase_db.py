@@ -1042,10 +1042,29 @@ def update_event(event_id, data, facilitator_ids=None):
 
 
 def delete_event(event_id):
+    """
+    Delete an event and all rows in child tables that reference it.
+    All deletes run inside one transaction — if any DELETE fails,
+    nothing is committed.
+
+    Child tables cleared (in FK-safe order):
+      1. event_facilitators   (event_id)
+      2. communications       (event_id)
+      3. feedback             (event_id)
+      4. mileage_reimbursements (event_id)
+      5. messages             (event_id)
+      6. tasks                (related_event_id)
+      7. events               (event_id)  — the parent row
+    """
     conn = get_connection()
     try:
         with conn.cursor() as cur:
             cur.execute("DELETE FROM event_facilitators WHERE event_id=%s", (event_id,))
+            cur.execute("DELETE FROM communications WHERE event_id=%s", (event_id,))
+            cur.execute("DELETE FROM feedback WHERE event_id=%s", (event_id,))
+            cur.execute("DELETE FROM mileage_reimbursements WHERE event_id=%s", (event_id,))
+            cur.execute("DELETE FROM messages WHERE event_id=%s", (event_id,))
+            cur.execute("DELETE FROM tasks WHERE related_event_id=%s", (event_id,))
             cur.execute("DELETE FROM events WHERE event_id=%s", (event_id,))
         conn.commit()
     finally:
