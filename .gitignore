@@ -27,3 +27,9 @@ env/
 # OS
 .DS_Store
 Thumbs.db
+
+# Local audit/diagnostic files (never commit)
+_*_audit.txt
+
+# Office/OneDrive lock files
+~$*
