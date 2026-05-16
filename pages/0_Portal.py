@@ -12,6 +12,7 @@ from utils.database import (
 from utils.auth import require_auth, render_sidebar_user
 from utils.styles import inject_css
 from html import escape as _esc
+from utils.format_helpers import format_date
 
 st.set_page_config(page_title="My Portal · Community Conversations",
                    page_icon="🗺️", layout="wide")
@@ -188,11 +189,11 @@ with tab_msg:
     my_event_opts = {}
     for e in all_events2:
         if person_type == "host" and e.get("host_id") == person_id:
-            my_event_opts[e["event_id"]] = f"{e['event_name']} ({e['event_date']})"
+            my_event_opts[e["event_id"]] = f"{e['event_name']} ({format_date(e['event_date'])})"
         elif person_type == "facilitator":
             facs = get_event_facilitators(e["event_id"])
             if any(f["facilitator_id"] == person_id for f in facs):
-                my_event_opts[e["event_id"]] = f"{e['event_name']} ({e['event_date']})"
+                my_event_opts[e["event_id"]] = f"{e['event_name']} ({format_date(e['event_date'])})"
 
     with st.form("send_message_form"):
         category = st.selectbox("Message Type", [
@@ -266,11 +267,11 @@ with tab_feedback:
     for e in all_events3:
         if e.get("status") == "Completed":
             if person_type == "host" and e.get("host_id") == person_id:
-                completed_my[e["event_id"]] = f"{e['event_name']} ({e['event_date']})"
+                completed_my[e["event_id"]] = f"{e['event_name']} ({format_date(e['event_date'])})"
             elif person_type == "facilitator":
                 facs = get_event_facilitators(e["event_id"])
                 if any(f["facilitator_id"] == person_id for f in facs):
-                    completed_my[e["event_id"]] = f"{e['event_name']} ({e['event_date']})"
+                    completed_my[e["event_id"]] = f"{e['event_name']} ({format_date(e['event_date'])})"
 
     if not completed_my:
         st.info("No completed events yet. Feedback can be submitted after your event is marked complete.")

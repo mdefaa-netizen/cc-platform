@@ -12,6 +12,7 @@ from utils.email_utils import (send_email, template_confirmation,
                                 template_reminder, template_post_event)
 from utils.auth import require_auth, render_sidebar_user
 from utils.styles import inject_css, page_header
+from utils.format_helpers import format_date
 
 st.set_page_config(page_title="Communications · CC Platform", page_icon="📧", layout="wide")
 inject_css()
@@ -78,7 +79,7 @@ with tab_send:
                 custom_name  = st.text_input("Recipient Name", placeholder="e.g., John Smith")
 
         # Related event
-        event_opts = {e["event_id"]: f"{e['event_name']} ({e['event_date']})" for e in events}
+        event_opts = {e["event_id"]: f"{e['event_name']} ({format_date(e['event_date'])})" for e in events}
         rel_event  = st.selectbox("Related Event (optional)", options=[""] + list(event_opts.keys()),
                                    format_func=lambda x: "— None —" if x=="" else event_opts[x])
 

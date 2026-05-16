@@ -7,6 +7,7 @@ from utils.database import (log_activity, add_notification, get_all_hosts, get_h
     add_host, update_host, delete_host, get_host_events, init_db)
 from utils.auth import require_auth, render_sidebar_user
 from utils.styles import inject_css, page_header
+from utils.format_helpers import format_date
 
 st.set_page_config(page_title="Hosts · CC Platform", page_icon="👥", layout="wide")
 inject_css()
@@ -50,7 +51,7 @@ if _role == "host" and linked_id:
         st.markdown("### Your Events")
         for ev in events:
             badge = {"Scheduled":"🔵","Completed":"🟢","Cancelled":"🔴"}.get(ev.get("status",""),"⚪")
-            st.markdown(f"- {badge} **{ev['event_name']}** · {ev['event_date']} · {ev.get('city','')}")
+            st.markdown(f"- {badge} **{ev['event_name']}** · {format_date(ev['event_date'])} · {ev.get('city','')}")
     st.stop()
 
 if _is_coord:
@@ -90,7 +91,7 @@ with tab_list:
                     st.markdown(f"**Check Payable To:** {h.get('check_payable_to','—')}")
                 with c3:
                     st.markdown(f"**Payment:** {badge} {h.get('payment_status','—')} — **${h.get('payment_amount',0):.2f}**")
-                    st.markdown(f"**Date Paid:** {h.get('payment_date','—') or '—'}")
+                    st.markdown(f"**Date Paid:** {format_date(h.get('payment_date')) or '—'}")
                 if h.get("notes"):
                     st.caption(f"Notes: {h['notes']}")
                 if _is_coord:
@@ -224,4 +225,4 @@ if tab_edit:
             st.markdown(f"**Events for {h['name']}:**")
             for ev in hevents:
                 badge = {"Scheduled":"🔵","Completed":"🟢","Cancelled":"🔴"}.get(ev.get("status",""),"⚪")
-                st.markdown(f"- {badge} {ev['event_name']} · {ev['event_date']} · {ev.get('city','')}")
+                st.markdown(f"- {badge} {ev['event_name']} · {format_date(ev['event_date'])} · {ev.get('city','')}")

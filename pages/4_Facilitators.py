@@ -9,6 +9,7 @@ from utils.database import (
     update_facilitator, delete_facilitator, get_facilitator_events, init_db)
 from utils.auth import require_auth, render_sidebar_user
 from utils.styles import inject_css, page_header
+from utils.format_helpers import format_date
 
 st.set_page_config(page_title="Facilitators · CC Platform", page_icon="🎤", layout="wide")
 inject_css()
@@ -51,7 +52,7 @@ if _role == "facilitator" and linked_id:
         st.markdown("### Your Events")
         for ev in events:
             badge = {"Scheduled":"🔵","Completed":"🟢","Cancelled":"🔴"}.get(ev.get("status",""),"⚪")
-            st.markdown(f"- {badge} **{ev['event_name']}** · {ev['event_date']} · {ev.get('city','')}")
+            st.markdown(f"- {badge} **{ev['event_name']}** · {format_date(ev['event_date'])} · {ev.get('city','')}")
     st.stop()
 
 if _is_coord:
@@ -94,7 +95,7 @@ with tab_list:
                     st.markdown(f"**Payment Amount:** ${f.get('payment_amount',0):.2f}")
                     st.markdown(f"**Payment Status:** {badge} {f.get('payment_status','—')}")
                 with c3:
-                    st.markdown(f"**Date Paid:** {f.get('payment_date','—') or '—'}")
+                    st.markdown(f"**Date Paid:** {format_date(f.get('payment_date')) or '—'}")
                     st.markdown(f"**Events Assigned:** {len(events)}")
                 if f.get("notes"):
                     st.caption(f"Notes: {f['notes']}")
@@ -102,7 +103,7 @@ with tab_list:
                     st.markdown("**Events:**")
                     for ev in events[:4]:
                         b2 = {"Scheduled":"🔵","Completed":"🟢","Cancelled":"🔴"}.get(ev.get("status",""),"⚪")
-                        st.markdown(f"  - {b2} {ev['event_name']} · {ev['event_date']}")
+                        st.markdown(f"  - {b2} {ev['event_name']} · {format_date(ev['event_date'])}")
                 if _is_coord:
                     if st.button("✏️ Edit", key=f"edit_f_{f['facilitator_id']}"):
                         st.session_state["edit_fac_id"] = f["facilitator_id"]
