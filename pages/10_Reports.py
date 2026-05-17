@@ -47,12 +47,12 @@ with tab_gen:
         date_label = "All Events"
 
         if date_mode == "Custom Range":
-            import datetime
+            import datetime as dt
             c1, c2 = st.columns(2)
             with c1:
-                d_from = st.date_input("From Date", value=datetime.date(2025,1,1))
+                d_from = st.date_input("From Date", value=dt.date(2025,1,1))
             with c2:
-                d_to   = st.date_input("To Date",   value=datetime.date.today())
+                d_to   = st.date_input("To Date",   value=dt.date.today())
             selected_events = [e for e in events_all
                                if e.get("event_date","") >= str(d_from)
                                and e.get("event_date","") <= str(d_to)]
