@@ -137,11 +137,9 @@ with tab_list:
                         st.rerun()
 
 with tab_add:
-    if st.session_state.get("task_just_added"):
-        st.session_state.pop("task_just_added")
     st.markdown("### Add New Task")
     event_options = {e["event_id"]: e["event_name"] for e in events}
-    with st.form("add_task_form"):
+    with st.form("add_task_form", clear_on_submit=True):
         c1, c2 = st.columns(2)
         with c1:
             title = st.text_input("Task Title *", placeholder="e.g., Send confirmation to Concord host")
@@ -156,17 +154,24 @@ with tab_add:
         notes = st.text_input("Notes")
 
         if st.form_submit_button("💾 Save Task", use_container_width=True):
-            if st.session_state.get("task_just_added"):
-                pass
-            elif not title:
+            if not title:
                 st.error("Task title is required.")
             else:
-                st.session_state["task_just_added"] = True
                 add_task({"task_title":title,"task_description":desc,
                            "related_event_id": rel_ev or None,
                            "due_date":str(due),"priority":prio,"status":stat,"notes":notes})
-                st.success(f"✅ Task '{title}' created!")
+                st.session_state["task_just_added"] = {"title": title}
+                st.balloons()
                 st.rerun()
+
+    # Post-save confirmation banner — shown after a successful add
+    if "task_just_added" in st.session_state:
+        info = st.session_state["task_just_added"]
+        st.success(f"✅ Task created: \"{info['title']}\".")
+        st.info("👉 Click the **Task List** tab above to see it.")
+        if st.button("➕ Add Another Task", use_container_width=True, key="add_another_task"):
+            del st.session_state["task_just_added"]
+            st.rerun()
 
 with tab_edit:
     task_opts = {t["task_id"]: f"{t['task_title']} (Due: {format_date(t.get('due_date')) or '—'})" for t in tasks}

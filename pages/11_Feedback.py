@@ -31,11 +31,9 @@ feedback = get_all_feedback()
 tab_add, tab_view, tab_summary = st.tabs(["➕ Add Feedback", "📋 All Feedback", "📊 Summary"])
 
 with tab_add:
-    if st.session_state.get("feedback_just_added"):
-        st.session_state.pop("feedback_just_added")
     st.markdown("### Record Participant Feedback")
     ev_opts = {e["event_id"]: f"{e['event_name']} ({format_date(e['event_date'])})" for e in events}
-    with st.form("add_feedback_form"):
+    with st.form("add_feedback_form", clear_on_submit=True):
         ev_sel = st.selectbox("Event *", options=[""] + list(ev_opts.keys()),
                                format_func=lambda x: "— Select Event —" if x=="" else ev_opts[x])
         pname = st.text_input("Participant Name (optional)", placeholder="Leave blank for anonymous")
@@ -44,16 +42,23 @@ with tab_add:
         text = st.text_area("Feedback *", placeholder="Enter participant feedback here...", height=140)
 
         if st.form_submit_button("💾 Save Feedback", use_container_width=True):
-            if st.session_state.get("feedback_just_added"):
-                pass
-            elif not ev_sel or not text:
+            if not ev_sel or not text:
                 st.error("Event and feedback text are required.")
             else:
-                st.session_state["feedback_just_added"] = True
                 add_feedback({"event_id":ev_sel,"participant_name":pname or None,
                                "feedback_text":text,"rating":rating})
-                st.success("✅ Feedback recorded!")
+                st.session_state["feedback_just_added"] = {"event": ev_opts.get(ev_sel, "the event")}
+                st.balloons()
                 st.rerun()
+
+    # Post-save confirmation banner — shown after a successful add
+    if "feedback_just_added" in st.session_state:
+        info = st.session_state["feedback_just_added"]
+        st.success(f"✅ Feedback recorded for {info['event']}.")
+        st.info("👉 Click the **All Feedback** tab above to review it.")
+        if st.button("➕ Add More Feedback", use_container_width=True, key="add_another_feedback"):
+            del st.session_state["feedback_just_added"]
+            st.rerun()
 
 with tab_view:
     st.markdown("### All Feedback")

@@ -52,10 +52,8 @@ with tab_list:
                     st.info("Switch to Edit Colleague tab.")
 
 with tab_add:
-    if st.session_state.get("nhh_just_added"):
-        st.session_state.pop("nhh_just_added")
     st.markdown("### Add NHH Colleague")
-    with st.form("add_nhh_form"):
+    with st.form("add_nhh_form", clear_on_submit=True):
         c1, c2 = st.columns(2)
         with c1:
             name  = st.text_input("Full Name *")
@@ -66,16 +64,23 @@ with tab_add:
             phone = st.text_input("Phone")
         notes = st.text_area("Notes", height=80)
         if st.form_submit_button("💾 Save Colleague", use_container_width=True):
-            if st.session_state.get("nhh_just_added"):
-                pass
-            elif not name:
+            if not name:
                 st.error("Name is required.")
             else:
-                st.session_state["nhh_just_added"] = True
                 add_nhh({"name": name, "title": title, "email": email,
                           "phone": phone, "role": role, "notes": notes})
-                st.success(f"✅ '{name}' added to NHH Colleagues!")
+                st.session_state["nhh_just_added"] = {"name": name}
+                st.balloons()
                 st.rerun()
+
+    # Post-save confirmation banner — shown after a successful add
+    if "nhh_just_added" in st.session_state:
+        info = st.session_state["nhh_just_added"]
+        st.success(f"✅ Colleague added: \"{info['name']}\".")
+        st.info("👉 Click the **All NHH Colleagues** tab above to see them in the list.")
+        if st.button("➕ Add Another Colleague", use_container_width=True, key="add_another_nhh"):
+            del st.session_state["nhh_just_added"]
+            st.rerun()
 
 with tab_edit:
     colleagues2 = get_all_nhh()
