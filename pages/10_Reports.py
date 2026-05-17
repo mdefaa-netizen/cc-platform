@@ -10,6 +10,7 @@ from utils.database import (
 from utils.report_utils import generate_excel, generate_pdf
 from utils.auth import require_auth, render_sidebar_user
 from utils.styles import inject_css, page_header
+from utils.format_helpers import format_date
 from datetime import datetime
 
 st.set_page_config(page_title="Reports · CC Platform", page_icon="📊", layout="wide")
@@ -58,7 +59,7 @@ with tab_gen:
             date_label = f"{d_from} to {d_to}"
 
         elif date_mode == "Specific Event":
-            ev_opts = {e["event_id"]: f"{e['event_name']} ({e['event_date']})" for e in events_all}
+            ev_opts = {e["event_id"]: f"{e['event_name']} ({format_date(e['event_date'])})" for e in events_all}
             sel_ev  = st.selectbox("Select Event", options=list(ev_opts.keys()),
                                     format_func=lambda x: ev_opts[x])
             selected_events = [e for e in events_all if e["event_id"]==sel_ev]

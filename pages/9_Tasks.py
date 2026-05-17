@@ -9,6 +9,7 @@ from utils.database import (
     get_all_events, get_overdue_tasks, init_db)
 from utils.auth import require_auth, render_sidebar_user
 from utils.styles import inject_css, page_header
+from utils.format_helpers import format_date
 
 st.set_page_config(page_title="Tasks · CC Platform", page_icon="✅", layout="wide")
 inject_css()
@@ -103,7 +104,7 @@ with tab_list:
             p_icon = priority_icons.get(t.get("priority","Medium"),"🔵")
             s_icon = status_icons.get(t.get("status","Not Started"),"⬜")
             overdue_flag = " 🚨 OVERDUE" if is_overdue else ""
-            due_str = t.get("due_date","—") or "—"
+            due_str = format_date(t.get("due_date")) or "—"
 
             with st.expander(f"{s_icon} {p_icon} {t['task_title']}{overdue_flag} — Due: {due_str}"):
                 c1, c2, c3 = st.columns(3)
@@ -111,10 +112,10 @@ with tab_list:
                     st.markdown(f"**Priority:** {p_icon} {t.get('priority','')}")
                     st.markdown(f"**Status:** {s_icon} {t.get('status','')}")
                 with c2:
-                    st.markdown(f"**Due Date:** {t.get('due_date','—') or '—'}")
+                    st.markdown(f"**Due Date:** {format_date(t.get('due_date')) or '—'}")
                     st.markdown(f"**Related Event:** {t.get('event_name','—') or '—'}")
                 with c3:
-                    st.markdown(f"**Completed:** {t.get('completed_date','—') or '—'}")
+                    st.markdown(f"**Completed:** {format_date(t.get('completed_date')) or '—'}")
                 if t.get("task_description"):
                     st.caption(t["task_description"])
                 if t.get("notes"):
@@ -168,7 +169,7 @@ with tab_add:
                 st.rerun()
 
 with tab_edit:
-    task_opts = {t["task_id"]: f"{t['task_title']} (Due: {t.get('due_date','—')})" for t in tasks}
+    task_opts = {t["task_id"]: f"{t['task_title']} (Due: {format_date(t.get('due_date')) or '—'})" for t in tasks}
     default_t = st.session_state.get("edit_task_id","")
 
     sel = st.selectbox("Select task to edit", options=[""] + list(task_opts.keys()),

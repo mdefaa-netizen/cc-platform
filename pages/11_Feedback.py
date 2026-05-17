@@ -6,6 +6,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from utils.database import log_activity, add_notification, get_all_events, get_all_feedback, add_feedback, get_event_feedback, init_db
 from utils.auth import require_auth, render_sidebar_user
 from utils.styles import inject_css, page_header
+from utils.format_helpers import format_date
 
 st.set_page_config(page_title="Feedback · CC Platform", page_icon="📝", layout="wide")
 inject_css()
@@ -33,7 +34,7 @@ with tab_add:
     if st.session_state.get("feedback_just_added"):
         st.session_state.pop("feedback_just_added")
     st.markdown("### Record Participant Feedback")
-    ev_opts = {e["event_id"]: f"{e['event_name']} ({e['event_date']})" for e in events}
+    ev_opts = {e["event_id"]: f"{e['event_name']} ({format_date(e['event_date'])})" for e in events}
     with st.form("add_feedback_form"):
         ev_sel = st.selectbox("Event *", options=[""] + list(ev_opts.keys()),
                                format_func=lambda x: "— Select Event —" if x=="" else ev_opts[x])

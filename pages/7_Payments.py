@@ -12,6 +12,7 @@ from utils.database import (
 )
 from utils.auth import require_auth, render_sidebar_user
 from utils.styles import inject_css, page_header
+from utils.format_helpers import format_date
 
 st.set_page_config(page_title="Payments · CC Platform", page_icon="💰", layout="wide")
 inject_css()
@@ -210,7 +211,7 @@ with tab_list:
                     st.markdown(f"**Check Total:** ${check_total:,.2f}")
                     st.markdown(f"**Status:** {badge} {f.get('payment_status','—')}")
                 with c3:
-                    st.markdown(f"**Date Paid:** {f.get('payment_date','—') or '—'}")
+                    st.markdown(f"**Date Paid:** {format_date(f.get('payment_date')) or '—'}")
                     st.markdown(f"**Specialization:** {f.get('specialization','—') or '—'}")
 
                 # Payment flow buttons
@@ -316,7 +317,7 @@ with tab_triggers:
             inv  = st.session_state["invoice_submitted"].get(str(eid), False)
             ready = att and inv
 
-            with st.expander(f"{'✅' if ready else '⚠️'} {ev['event_name']} — {ev['event_date']}"):
+            with st.expander(f"{'✅' if ready else '⚠️'} {ev['event_name']} — {format_date(ev['event_date'])}"):
                 c1, c2, c3 = st.columns(3)
                 with c1:
                     st.markdown("**Event Completed:** ✅ Yes")
@@ -483,7 +484,7 @@ with tab_mileage:
 
             with col_right:
                 ev_opts = {0: "— Manual address —"}
-                ev_opts.update({e["event_id"]: f"{e['event_name']} — {e['event_date']}" for e in mil_events})
+                ev_opts.update({e["event_id"]: f"{e['event_name']} — {format_date(e['event_date'])}" for e in mil_events})
                 sel_ev = st.selectbox("Select Event (auto-fills address)", options=list(ev_opts.keys()),
                                       format_func=lambda x: ev_opts[x],
                                       key="mil_sel_ev")
