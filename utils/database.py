@@ -1126,6 +1126,23 @@ def get_mileage_total_pending():
     return row[0]
 
 
+def init_all():
+    """Initialise the full SQLite schema for local dev — mirrors
+    supabase_db.init_all(). All six helpers are idempotent. init_db()
+    also calls init_users() internally; the explicit call here is a
+    harmless idempotent repeat that keeps this aggregator self-documenting.
+    Dependency order matters: init_db() must create `events` before
+    init_users() runs its events.owner_user_id migration."""
+    init_db()             # hosts, facilitators, nhh/cdfa_colleagues, events,
+                          # event_facilitators, communications, tasks,
+                          # feedback, reports (+ init_users internally)
+    init_users()          # users (+ indexes, events.owner_user_id migration)
+    init_activity_log()   # activity_log
+    init_mileage()        # mileage_reimbursements
+    init_portal_access()  # portal_access
+    init_messages()       # messages
+
+
 # ── PostgreSQL override ───────────────────────────────────────────────────────
 # When DATABASE_URL is configured (Supabase / Streamlit Cloud), swap every
 # function above with its psycopg2 equivalent.  Local dev keeps SQLite.
