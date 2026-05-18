@@ -137,15 +137,15 @@ if _is_coord and tab_add:
                     from utils.database import get_all_events
                     existing = [e for e in get_all_events() if e["event_name"].lower()==event_name.lower() and e["event_date"]==str(event_date)]
                     if existing:
-                        st.error(f"An event '{event_name}' on {event_date} already exists.")
+                        st.error(f"An event '{event_name}' on {format_date(event_date)} already exists.")
                     else:
                         eid = add_event({
                             "event_name": event_name, "event_date": str(event_date),
                             "event_time": str(event_time), "host_id": host_sel or None,
                             "venue_address": venue_address, "city": city, "status": status,
                         }, facilitator_ids=fac_sel or [])
-                        log_activity("Event Created", f"{event_name} on {event_date} in {city}")
-                        add_notification(f"New event scheduled: {event_name} on {event_date} in {city}, NH", "all")
+                        log_activity("Event Created", f"{event_name} on {format_date(event_date)} in {city}")
+                        add_notification(f"New event scheduled: {event_name} on {format_date(event_date)} in {city}, NH", "all")
                         st.session_state["event_just_added"] = {
                             "name": event_name,
                             "date": format_date(event_date),
