@@ -152,6 +152,10 @@ with tab_grant:
                         st.success(f"Portal access created and approved for **{pname}**!")
                         st.warning(f"Share these credentials with {pname} (shown once only):")
                         st.code(f"Username: {username}\nPassword: {password}")
+                        st.info(
+                            f"Tell {pname} to sign in on the **My Portal** page with their "
+                            f"**Username** (not on the main **Email** sign-in)."
+                        )
                     else:
                         st.success(f"Portal access created for **{pname}** (pending approval).")
                         st.error(

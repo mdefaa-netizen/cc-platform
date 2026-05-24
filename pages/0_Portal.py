@@ -25,8 +25,18 @@ except ImportError:
     init_messages()
     init_portal_access()
 
-require_auth(allowed_roles=["coordinator", "facilitator", "host"])
-render_sidebar_user()
+# NOTE: We intentionally do NOT call require_auth() here. The host portal uses
+# its own credentials (portal_access table, via check_portal_login) which are
+# separate from the staff users table. Calling require_auth() would redirect
+# unauthenticated hosts to the staff login and prevent them from ever reaching
+# the portal username/password form below.
+#
+# Security: every code path below either (a) sets portal_user and st.rerun()s,
+# (b) calls st.stop(), or (c) is the post-gate dashboard which is preceded by
+# a fail-closed `if not puser: st.stop()` guard. Unauthenticated visitors see
+# only the portal_login() form, never portal CONTENT.
+if st.session_state.get("authenticated"):
+    render_sidebar_user()
 
 # ── Portal Login ───────────────────────────────────────────────────────────────
 if "portal_user" not in st.session_state:
@@ -62,7 +72,7 @@ def portal_login():
     </div></div>
     """, unsafe_allow_html=True)
 
-if not st.session_state.portal_user:
+if not st.session_state.get("portal_user"):
     # If user logged in via main login as facilitator/host, auto-set portal_user
     main_role = st.session_state.get("user_role")
     main_linked = st.session_state.get("linked_id")
@@ -89,7 +99,13 @@ if not st.session_state.portal_user:
         st.stop()
 
 # ── Portal Dashboard ───────────────────────────────────────────────────────────
-puser       = st.session_state.portal_user
+# Fail-closed guard: portal CONTENT is reached ONLY when portal_user is set.
+# Every branch of the gate block above either sets portal_user and st.rerun()s,
+# or st.stop()s. This guard catches any future regression that adds a fall-
+# through path.
+puser = st.session_state.get("portal_user")
+if not puser:
+    st.stop()
 person_type = puser.get("person_type","")
 person_id   = puser.get("person_id")
 person_name = puser.get("person_name","")
