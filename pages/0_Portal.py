@@ -7,7 +7,11 @@ from utils.database import (
     send_message, get_messages_for_person,
     get_notifications, mark_notifications_read,
     init_db, init_messages, init_portal_access,
-    check_portal_login, add_notification
+    check_portal_login, add_notification,
+    get_facilitators_for_host_event,
+    create_facilitator_conversation, add_conversation_message,
+    get_conversations_for_participant, get_conversation_messages,
+    get_visible_participants,
 )
 from utils.auth import require_auth, render_sidebar_user
 from utils.styles import inject_css
@@ -153,7 +157,17 @@ if notifs:
         st.rerun()
     st.markdown("---")
 
-tab_cal, tab_msg, tab_feedback = st.tabs(["📅 My Events", "💬 Message Coordinator", "📝 Submit Feedback"])
+# Host-only tab "Contact Facilitator(s)" surfaces a two-way thread with the
+# facilitator(s) of an event the host is on. The facilitator inbox lives in the
+# facilitator branch further below.
+if person_type == "host":
+    tab_cal, tab_msg, tab_fac, tab_feedback = st.tabs(
+        ["📅 My Events", "💬 Message Coordinator", "🤝 Contact Facilitator(s)", "📝 Submit Feedback"]
+    )
+else:
+    tab_cal, tab_msg, tab_fac, tab_feedback = st.tabs(
+        ["📅 My Events", "💬 Message Coordinator", "📨 Messages from Hosts", "📝 Submit Feedback"]
+    )
 
 # ── Calendar / My Events ───────────────────────────────────────────────────────
 with tab_cal:
@@ -200,6 +214,7 @@ with tab_cal:
 with tab_msg:
     st.markdown("### Send a Message to the Coordinator")
     st.caption("Use this to communicate about your event, payment, schedule, or anything else.")
+    st.caption("Messages in this portal may be reviewed by your coordinator.")
 
     all_events2 = get_all_events()
     my_event_opts = {}
@@ -272,6 +287,210 @@ with tab_msg:
                     st.caption(f"Replied: {m.get('replied_at','')[:16] if m.get('replied_at') else ''}")
                 else:
                     st.caption("⏳ Awaiting reply from Coordinator")
+
+# ── Contact Facilitator(s) / Messages from Hosts ─────────────────────────────
+# Host branch: start a thread with the facilitator(s) of an event the host is on.
+# Facilitator branch: view + reply to threads where this facilitator is a participant.
+# Both branches use get_visible_participants() so the silent coordinator is never
+# listed. The coordinator's read-only view of these threads lives in
+# pages/14_Messages.py.
+with tab_fac:
+    st.caption("Messages in this portal may be reviewed by your coordinator.")
+
+    if person_type == "host":
+        st.markdown("### Start a Conversation with Your Facilitator(s)")
+        st.caption("Pick one of your events, then pick which facilitator(s) to message.")
+
+        host_event_opts = {}
+        for e in get_all_events():
+            if e.get("host_id") == person_id:
+                host_event_opts[e["event_id"]] = f"{e['event_name']} ({format_date(e['event_date'])})"
+
+        if not host_event_opts:
+            st.info("No events assigned to you yet — once you have one, you can message its facilitator(s) here.")
+        else:
+            with st.form("contact_facilitator_form"):
+                fc_event_id = st.selectbox(
+                    "Event *",
+                    options=list(host_event_opts.keys()),
+                    format_func=lambda x: host_event_opts[x],
+                )
+                event_facs = get_facilitators_for_host_event(fc_event_id) if fc_event_id else []
+                fac_opts = {f["facilitator_id"]: f["name"] for f in event_facs}
+
+                if not fac_opts:
+                    st.info("No facilitator is assigned to this event yet. Your coordinator will assign one soon.")
+                    fc_fac_ids = []
+                else:
+                    fc_fac_ids = st.multiselect(
+                        "Facilitator(s) *",
+                        options=list(fac_opts.keys()),
+                        format_func=lambda x: fac_opts[x],
+                        default=list(fac_opts.keys()),
+                    )
+
+                fc_subject = st.text_input("Subject *", placeholder="Brief summary")
+                fc_body = st.text_area("Message *", placeholder="Write your message...", height=140)
+
+                if st.form_submit_button("📤 Send to Facilitator(s)", use_container_width=True):
+                    if not fc_fac_ids:
+                        st.error("Please select at least one facilitator.")
+                    elif not fc_subject or not fc_body:
+                        st.error("Subject and message are required.")
+                    else:
+                        conv_id = create_facilitator_conversation(
+                            event_id=fc_event_id,
+                            host_id=person_id,
+                            subject=fc_subject,
+                            facilitator_ids=fc_fac_ids,
+                            creator_type="host",
+                            creator_id=person_id,
+                            creator_name=person_name,
+                            first_body=fc_body,
+                        )
+                        # Best-effort notification to the chosen facilitator(s).
+                        # add_notification keys on target_role; the portal reads
+                        # notifs with role f"{person_type}_{person_id}", so we
+                        # mirror that key for each recipient.
+                        for fid in fc_fac_ids:
+                            add_notification(
+                                f"New message from host {person_name}: {fc_subject[:50]}",
+                                f"facilitator_{fid}",
+                            )
+                        st.success(f"✅ Conversation started with {len(fc_fac_ids)} facilitator(s).")
+                        st.balloons()
+
+        st.markdown("---")
+        st.markdown("### Your Facilitator Conversations")
+        host_convs = get_conversations_for_participant("host", person_id)
+        if not host_convs:
+            st.caption("No conversations yet.")
+        else:
+            for c in host_convs:
+                ts = str(c.get("created_at",""))[:16] if c.get("created_at") else ""
+                ev = c.get("event_name","") or "—"
+                with st.expander(f"🤝 {c.get('subject','')[:60]} · {ev} · {ts}"):
+                    visible = get_visible_participants(c["conversation_id"])
+                    fac_names = []
+                    for p in visible:
+                        if p.get("participant_type") == "facilitator":
+                            from utils.database import get_facilitator
+                            fpid = p.get("participant_id")
+                            try:
+                                f = get_facilitator(int(fpid)) if fpid is not None else None
+                            except (TypeError, ValueError):
+                                f = None
+                            if f:
+                                fac_names.append(f.get("name",""))
+                    if fac_names:
+                        st.caption(f"With: {', '.join(fac_names)}")
+
+                    for m in get_conversation_messages(c["conversation_id"]):
+                        m_ts = str(m.get("created_at",""))[:16] if m.get("created_at") else ""
+                        is_me = (m.get("sender_type") == "host" and str(m.get("sender_id")) == str(person_id))
+                        align = "right" if is_me else "left"
+                        bg = "#EAF6FF" if is_me else "#F3F4F6"
+                        st.markdown(
+                            f"<div style='text-align:{align}'>"
+                            f"<div style='display:inline-block;background:{bg};padding:0.6rem 0.9rem;"
+                            f"border-radius:10px;margin:0.25rem 0;max-width:80%'>"
+                            f"<div style='font-size:0.78rem;color:#666'>"
+                            f"{_esc(m.get('sender_name','') or m.get('sender_type',''))} · {_esc(m_ts)}"
+                            f"</div>"
+                            f"<div style='white-space:pre-wrap'>{_esc(m.get('body',''))}</div>"
+                            f"</div></div>",
+                            unsafe_allow_html=True,
+                        )
+
+                    reply_key = f"host_reply_{c['conversation_id']}"
+                    reply = st.text_area("Reply", key=reply_key, height=80,
+                                          placeholder="Type your reply here...")
+                    if st.button("📤 Send Reply", key=f"host_send_{c['conversation_id']}",
+                                 use_container_width=True):
+                        if reply.strip():
+                            add_conversation_message(
+                                c["conversation_id"], "host", person_id, person_name, reply.strip()
+                            )
+                            for p in visible:
+                                if p.get("participant_type") == "facilitator":
+                                    add_notification(
+                                        f"New reply from host {person_name}: {c.get('subject','')[:50]}",
+                                        f"facilitator_{p.get('participant_id')}",
+                                    )
+                            st.success("✅ Reply sent.")
+                            st.rerun()
+
+    else:
+        # Facilitator branch — read-and-reply inbox of host-initiated threads.
+        st.markdown("### Messages from Hosts")
+        st.caption("Hosts can reach you here about an event you facilitate.")
+
+        fac_convs = get_conversations_for_participant("facilitator", person_id)
+        if not fac_convs:
+            st.caption("No messages from hosts yet.")
+        else:
+            for c in fac_convs:
+                ts = str(c.get("created_at",""))[:16] if c.get("created_at") else ""
+                ev = c.get("event_name","") or "—"
+                host_name = c.get("host_name","") or "Host"
+                with st.expander(f"📨 {c.get('subject','')[:60]} · {host_name} · {ev} · {ts}"):
+                    visible = get_visible_participants(c["conversation_id"])
+                    other_fac_names = []
+                    for p in visible:
+                        if p.get("participant_type") == "facilitator" \
+                                and str(p.get("participant_id")) != str(person_id):
+                            from utils.database import get_facilitator
+                            fpid = p.get("participant_id")
+                            try:
+                                f = get_facilitator(int(fpid)) if fpid is not None else None
+                            except (TypeError, ValueError):
+                                f = None
+                            if f:
+                                other_fac_names.append(f.get("name",""))
+                    parts_caption = f"With host: {host_name}"
+                    if other_fac_names:
+                        parts_caption += f" · Co-facilitator(s): {', '.join(other_fac_names)}"
+                    st.caption(parts_caption)
+
+                    for m in get_conversation_messages(c["conversation_id"]):
+                        m_ts = str(m.get("created_at",""))[:16] if m.get("created_at") else ""
+                        is_me = (m.get("sender_type") == "facilitator"
+                                 and str(m.get("sender_id")) == str(person_id))
+                        align = "right" if is_me else "left"
+                        bg = "#EAF6FF" if is_me else "#F3F4F6"
+                        st.markdown(
+                            f"<div style='text-align:{align}'>"
+                            f"<div style='display:inline-block;background:{bg};padding:0.6rem 0.9rem;"
+                            f"border-radius:10px;margin:0.25rem 0;max-width:80%'>"
+                            f"<div style='font-size:0.78rem;color:#666'>"
+                            f"{_esc(m.get('sender_name','') or m.get('sender_type',''))} · {_esc(m_ts)}"
+                            f"</div>"
+                            f"<div style='white-space:pre-wrap'>{_esc(m.get('body',''))}</div>"
+                            f"</div></div>",
+                            unsafe_allow_html=True,
+                        )
+
+                    reply_key = f"fac_reply_{c['conversation_id']}"
+                    reply = st.text_area("Reply", key=reply_key, height=80,
+                                          placeholder="Type your reply here...")
+                    if st.button("📤 Send Reply", key=f"fac_send_{c['conversation_id']}",
+                                 use_container_width=True):
+                        if reply.strip():
+                            add_conversation_message(
+                                c["conversation_id"], "facilitator", person_id, person_name, reply.strip()
+                            )
+                            # Notify the host of the reply.
+                            host_pid = None
+                            for p in visible:
+                                if p.get("participant_type") == "host":
+                                    host_pid = p.get("participant_id")
+                            if host_pid is not None:
+                                add_notification(
+                                    f"New reply from facilitator {person_name}: {c.get('subject','')[:50]}",
+                                    f"host_{host_pid}",
+                                )
+                            st.success("✅ Reply sent.")
+                            st.rerun()
 
 # ── Submit Feedback ────────────────────────────────────────────────────────────
 with tab_feedback:

@@ -1126,9 +1126,205 @@ def get_mileage_total_pending():
     return row[0]
 
 
+# ── Contact Facilitator(s) — host↔facilitator threads with silent coordinator ──
+# Additive: a separate table set from the legacy `messages` table so the existing
+# Message-Coordinator flow (init_messages / send_message / get_messages_for_person
+# / reply_to_message) is untouched. The coordinator is a hidden participant
+# (is_hidden=1) on every conversation — visible only in the coordinator view.
+
+def init_facilitator_conversations():
+    conn = get_connection()
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS facilitator_conversations (
+            conversation_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_id        INTEGER REFERENCES events(event_id),
+            host_id         INTEGER REFERENCES hosts(host_id),
+            subject         TEXT,
+            status          TEXT DEFAULT 'open',
+            created_by_type TEXT,
+            created_by_id   INTEGER,
+            created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE TABLE IF NOT EXISTS facilitator_conversation_messages (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            conversation_id INTEGER REFERENCES facilitator_conversations(conversation_id),
+            sender_type     TEXT NOT NULL,
+            sender_id       INTEGER,
+            sender_name     TEXT,
+            body            TEXT NOT NULL,
+            created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE TABLE IF NOT EXISTS facilitator_conversation_participants (
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            conversation_id  INTEGER REFERENCES facilitator_conversations(conversation_id),
+            participant_type TEXT NOT NULL,
+            -- TEXT (not INTEGER) so the same column can hold host_id /
+            -- facilitator_id (integers) and coordinator users.id (UUID under
+            -- Postgres). Callers must str() the value before insert.
+            participant_id   TEXT,
+            is_hidden        INTEGER DEFAULT 0,
+            created_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_fc_participants_lookup
+            ON facilitator_conversation_participants (participant_type, participant_id);
+        CREATE INDEX IF NOT EXISTS idx_fc_messages_conv
+            ON facilitator_conversation_messages (conversation_id, created_at);
+    """)
+    conn.commit(); conn.close()
+
+
+def get_facilitators_for_host_event(event_id):
+    """Facilitators assigned to a specific event. Returns list of dicts with
+    facilitator_id + name + email. Wraps the existing event_facilitators join."""
+    with _safe_conn() as conn:
+        rows = conn.execute("""
+            SELECT f.facilitator_id, f.name, f.email
+            FROM facilitators f
+            JOIN event_facilitators ef ON f.facilitator_id = ef.facilitator_id
+            WHERE ef.event_id = ?
+            ORDER BY f.name
+        """, (event_id,)).fetchall()
+        return [dict(r) for r in rows]
+
+
+def resolve_main_coordinator():
+    """Return the users.id of the main coordinator (silent-copy recipient).
+    Preference order: bootstrap email mdefaa@gmail.com if active, else the
+    earliest-created active coordinator. Returns None if no coordinator exists
+    (caller must decide whether to skip the hidden CC in that case)."""
+    with _safe_conn() as conn:
+        row = conn.execute("""
+            SELECT id FROM users
+            WHERE role='coordinator' AND is_active=1 AND email=?
+            LIMIT 1
+        """, (BOOTSTRAP_COORDINATOR_EMAIL,)).fetchone()
+        if row:
+            return row["id"]
+        row = conn.execute("""
+            SELECT id FROM users
+            WHERE role='coordinator' AND is_active=1
+            ORDER BY created_at ASC, id ASC
+            LIMIT 1
+        """).fetchone()
+        return row["id"] if row else None
+
+
+def create_facilitator_conversation(event_id, host_id, subject, facilitator_ids,
+                                    creator_type, creator_id, creator_name, first_body):
+    """Insert the conversation + first message + participants (host + chosen
+    facilitators + silent coordinator). Returns the new conversation_id."""
+    init_facilitator_conversations()
+    coord_user_id = resolve_main_coordinator()
+    with _safe_conn() as conn:
+        cur = conn.execute("""
+            INSERT INTO facilitator_conversations
+                (event_id, host_id, subject, status, created_by_type, created_by_id)
+            VALUES (?,?,?,?,?,?)
+        """, (event_id, host_id, subject, 'open', creator_type, creator_id))
+        conv_id = cur.lastrowid
+
+        conn.execute("""
+            INSERT INTO facilitator_conversation_messages
+                (conversation_id, sender_type, sender_id, sender_name, body)
+            VALUES (?,?,?,?,?)
+        """, (conv_id, creator_type, creator_id, creator_name, first_body))
+
+        conn.execute("""
+            INSERT INTO facilitator_conversation_participants
+                (conversation_id, participant_type, participant_id, is_hidden)
+            VALUES (?,?,?,?)
+        """, (conv_id, 'host', str(host_id), 0))
+
+        for fid in (facilitator_ids or []):
+            conn.execute("""
+                INSERT INTO facilitator_conversation_participants
+                    (conversation_id, participant_type, participant_id, is_hidden)
+                VALUES (?,?,?,?)
+            """, (conv_id, 'facilitator', str(fid), 0))
+
+        if coord_user_id is not None:
+            conn.execute("""
+                INSERT INTO facilitator_conversation_participants
+                    (conversation_id, participant_type, participant_id, is_hidden)
+                VALUES (?,?,?,?)
+            """, (conv_id, 'coordinator', str(coord_user_id), 1))
+
+        conn.commit()
+        return conv_id
+
+
+def add_conversation_message(conversation_id, sender_type, sender_id, sender_name, body):
+    init_facilitator_conversations()
+    with _safe_conn() as conn:
+        conn.execute("""
+            INSERT INTO facilitator_conversation_messages
+                (conversation_id, sender_type, sender_id, sender_name, body)
+            VALUES (?,?,?,?,?)
+        """, (conversation_id, sender_type, sender_id, sender_name, body))
+        conn.commit()
+
+
+def get_conversations_for_participant(participant_type, participant_id):
+    """Conversations where this person is a participant (regardless of is_hidden,
+    but in practice host/facilitator are never hidden). Each row carries event_name
+    and host_name for display."""
+    init_facilitator_conversations()
+    with _safe_conn() as conn:
+        rows = conn.execute("""
+            SELECT c.*, e.event_name, h.name AS host_name
+            FROM facilitator_conversations c
+            JOIN facilitator_conversation_participants p
+                ON p.conversation_id = c.conversation_id
+            LEFT JOIN events e ON c.event_id = e.event_id
+            LEFT JOIN hosts  h ON c.host_id  = h.host_id
+            WHERE p.participant_type = ? AND p.participant_id = ?
+            ORDER BY c.created_at DESC
+        """, (participant_type, str(participant_id))).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_conversation_messages(conversation_id):
+    init_facilitator_conversations()
+    with _safe_conn() as conn:
+        rows = conn.execute("""
+            SELECT * FROM facilitator_conversation_messages
+            WHERE conversation_id = ?
+            ORDER BY created_at ASC, id ASC
+        """, (conversation_id,)).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_visible_participants(conversation_id):
+    """Participants with is_hidden=0 only. Host/facilitator views must call this
+    so the silent coordinator is never disclosed."""
+    init_facilitator_conversations()
+    with _safe_conn() as conn:
+        rows = conn.execute("""
+            SELECT * FROM facilitator_conversation_participants
+            WHERE conversation_id = ? AND is_hidden = 0
+            ORDER BY id ASC
+        """, (conversation_id,)).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_all_facilitator_conversations():
+    """Coordinator view: every conversation, newest first. Coordinator sees all
+    threads regardless of participation."""
+    init_facilitator_conversations()
+    with _safe_conn() as conn:
+        rows = conn.execute("""
+            SELECT c.*, e.event_name, h.name AS host_name
+            FROM facilitator_conversations c
+            LEFT JOIN events e ON c.event_id = e.event_id
+            LEFT JOIN hosts  h ON c.host_id  = h.host_id
+            ORDER BY c.created_at DESC
+        """).fetchall()
+        return [dict(r) for r in rows]
+
+
 def init_all():
     """Initialise the full SQLite schema for local dev — mirrors
-    supabase_db.init_all(). All six helpers are idempotent. init_db()
+    supabase_db.init_all(). All seven helpers are idempotent. init_db()
     also calls init_users() internally; the explicit call here is a
     harmless idempotent repeat that keeps this aggregator self-documenting.
     Dependency order matters: init_db() must create `events` before
@@ -1141,6 +1337,7 @@ def init_all():
     init_mileage()        # mileage_reimbursements
     init_portal_access()  # portal_access
     init_messages()       # messages
+    init_facilitator_conversations()  # facilitator_conversations + messages + participants
 
 
 # ── PostgreSQL override ───────────────────────────────────────────────────────

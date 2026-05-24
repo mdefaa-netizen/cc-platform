@@ -408,6 +408,39 @@ def init_all():
                         ON DELETE SET NULL;
                     END IF;
                 END $$""")
+            # facilitator_conversations (Contact Facilitator(s) feature).
+            # Additive: independent of the legacy `messages` table. Coordinator
+            # is recorded as a hidden participant (is_hidden=1).
+            cur.execute("""CREATE TABLE IF NOT EXISTS facilitator_conversations (
+                conversation_id SERIAL PRIMARY KEY,
+                event_id        INTEGER REFERENCES events(event_id),
+                host_id         INTEGER REFERENCES hosts(host_id),
+                subject         TEXT,
+                status          TEXT DEFAULT 'open',
+                created_by_type TEXT,
+                created_by_id   INTEGER,
+                created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
+            cur.execute("""CREATE TABLE IF NOT EXISTS facilitator_conversation_messages (
+                id              SERIAL PRIMARY KEY,
+                conversation_id INTEGER REFERENCES facilitator_conversations(conversation_id),
+                sender_type     TEXT NOT NULL,
+                sender_id       INTEGER,
+                sender_name     TEXT,
+                body            TEXT NOT NULL,
+                created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
+            # participant_id is TEXT so the same column can hold host/facilitator
+            # integer ids AND the coordinator users.id UUID. Callers str() the value.
+            cur.execute("""CREATE TABLE IF NOT EXISTS facilitator_conversation_participants (
+                id               SERIAL PRIMARY KEY,
+                conversation_id  INTEGER REFERENCES facilitator_conversations(conversation_id),
+                participant_type TEXT NOT NULL,
+                participant_id   TEXT,
+                is_hidden        INTEGER DEFAULT 0,
+                created_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
+            cur.execute("""CREATE INDEX IF NOT EXISTS idx_fc_participants_lookup
+                ON facilitator_conversation_participants (participant_type, participant_id)""")
+            cur.execute("""CREATE INDEX IF NOT EXISTS idx_fc_messages_conv
+                ON facilitator_conversation_messages (conversation_id, created_at)""")
         conn.commit()
         _schema_initialised = True
     finally:
@@ -1553,3 +1586,193 @@ def get_mileage_total_pending():
         return val
     finally:
         _putconn(conn)
+
+
+# ── Contact Facilitator(s) — host↔facilitator threads with silent coordinator ──
+# Parity mirror of utils.database. The three tables (facilitator_conversations,
+# facilitator_conversation_messages, facilitator_conversation_participants) are
+# created inside init_all() above; init_facilitator_conversations() is exposed
+# as an idempotent standalone so callers that pre-date init_all() still work.
+
+BOOTSTRAP_COORDINATOR_EMAIL_FC = "mdefaa@gmail.com"
+
+
+def init_facilitator_conversations():
+    if _schema_initialised:
+        return
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""CREATE TABLE IF NOT EXISTS facilitator_conversations (
+                conversation_id SERIAL PRIMARY KEY,
+                event_id        INTEGER REFERENCES events(event_id),
+                host_id         INTEGER REFERENCES hosts(host_id),
+                subject         TEXT,
+                status          TEXT DEFAULT 'open',
+                created_by_type TEXT,
+                created_by_id   INTEGER,
+                created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
+            cur.execute("""CREATE TABLE IF NOT EXISTS facilitator_conversation_messages (
+                id              SERIAL PRIMARY KEY,
+                conversation_id INTEGER REFERENCES facilitator_conversations(conversation_id),
+                sender_type     TEXT NOT NULL,
+                sender_id       INTEGER,
+                sender_name     TEXT,
+                body            TEXT NOT NULL,
+                created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
+            cur.execute("""CREATE TABLE IF NOT EXISTS facilitator_conversation_participants (
+                id               SERIAL PRIMARY KEY,
+                conversation_id  INTEGER REFERENCES facilitator_conversations(conversation_id),
+                participant_type TEXT NOT NULL,
+                participant_id   TEXT,
+                is_hidden        INTEGER DEFAULT 0,
+                created_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
+            cur.execute("""CREATE INDEX IF NOT EXISTS idx_fc_participants_lookup
+                ON facilitator_conversation_participants (participant_type, participant_id)""")
+            cur.execute("""CREATE INDEX IF NOT EXISTS idx_fc_messages_conv
+                ON facilitator_conversation_messages (conversation_id, created_at)""")
+        conn.commit()
+    finally:
+        _putconn(conn)
+
+
+def get_facilitators_for_host_event(event_id):
+    conn = get_connection()
+    return _fetchall(conn, """
+        SELECT f.facilitator_id, f.name, f.email
+        FROM facilitators f
+        JOIN event_facilitators ef ON f.facilitator_id = ef.facilitator_id
+        WHERE ef.event_id = %s
+        ORDER BY f.name
+    """, (event_id,))
+
+
+def resolve_main_coordinator():
+    """Return users.id (UUID) of the main coordinator, or None.
+    Preference: bootstrap email mdefaa@gmail.com if active, else earliest-created
+    active coordinator. Note Postgres uses is_active BOOLEAN (TRUE/FALSE), not 0/1."""
+    conn = get_connection()
+    try:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("""
+                SELECT id FROM users
+                WHERE role='coordinator' AND is_active=TRUE AND email=%s
+                LIMIT 1
+            """, (BOOTSTRAP_COORDINATOR_EMAIL_FC,))
+            row = cur.fetchone()
+            if row:
+                return row["id"]
+            cur.execute("""
+                SELECT id FROM users
+                WHERE role='coordinator' AND is_active=TRUE
+                ORDER BY created_at ASC, id ASC
+                LIMIT 1
+            """)
+            row = cur.fetchone()
+            return row["id"] if row else None
+    finally:
+        _putconn(conn)
+
+
+def create_facilitator_conversation(event_id, host_id, subject, facilitator_ids,
+                                    creator_type, creator_id, creator_name, first_body):
+    init_facilitator_conversations()
+    coord_user_id = resolve_main_coordinator()
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO facilitator_conversations
+                    (event_id, host_id, subject, status, created_by_type, created_by_id)
+                VALUES (%s,%s,%s,%s,%s,%s)
+                RETURNING conversation_id
+            """, (event_id, host_id, subject, 'open', creator_type, creator_id))
+            conv_id = cur.fetchone()[0]
+
+            cur.execute("""
+                INSERT INTO facilitator_conversation_messages
+                    (conversation_id, sender_type, sender_id, sender_name, body)
+                VALUES (%s,%s,%s,%s,%s)
+            """, (conv_id, creator_type, creator_id, creator_name, first_body))
+
+            cur.execute("""
+                INSERT INTO facilitator_conversation_participants
+                    (conversation_id, participant_type, participant_id, is_hidden)
+                VALUES (%s,%s,%s,%s)
+            """, (conv_id, 'host', str(host_id), 0))
+
+            for fid in (facilitator_ids or []):
+                cur.execute("""
+                    INSERT INTO facilitator_conversation_participants
+                        (conversation_id, participant_type, participant_id, is_hidden)
+                    VALUES (%s,%s,%s,%s)
+                """, (conv_id, 'facilitator', str(fid), 0))
+
+            if coord_user_id is not None:
+                cur.execute("""
+                    INSERT INTO facilitator_conversation_participants
+                        (conversation_id, participant_type, participant_id, is_hidden)
+                    VALUES (%s,%s,%s,%s)
+                """, (conv_id, 'coordinator', str(coord_user_id), 1))
+
+        conn.commit()
+        return conv_id
+    finally:
+        _putconn(conn)
+
+
+def add_conversation_message(conversation_id, sender_type, sender_id, sender_name, body):
+    init_facilitator_conversations()
+    conn = get_connection()
+    _execute(conn, """
+        INSERT INTO facilitator_conversation_messages
+            (conversation_id, sender_type, sender_id, sender_name, body)
+        VALUES (%s,%s,%s,%s,%s)
+    """, (conversation_id, sender_type, sender_id, sender_name, body))
+
+
+def get_conversations_for_participant(participant_type, participant_id):
+    init_facilitator_conversations()
+    conn = get_connection()
+    return _fetchall(conn, """
+        SELECT c.*, e.event_name, h.name AS host_name
+        FROM facilitator_conversations c
+        JOIN facilitator_conversation_participants p
+            ON p.conversation_id = c.conversation_id
+        LEFT JOIN events e ON c.event_id = e.event_id
+        LEFT JOIN hosts  h ON c.host_id  = h.host_id
+        WHERE p.participant_type = %s AND p.participant_id = %s
+        ORDER BY c.created_at DESC
+    """, (participant_type, str(participant_id)))
+
+
+def get_conversation_messages(conversation_id):
+    init_facilitator_conversations()
+    conn = get_connection()
+    return _fetchall(conn, """
+        SELECT * FROM facilitator_conversation_messages
+        WHERE conversation_id = %s
+        ORDER BY created_at ASC, id ASC
+    """, (conversation_id,))
+
+
+def get_visible_participants(conversation_id):
+    init_facilitator_conversations()
+    conn = get_connection()
+    return _fetchall(conn, """
+        SELECT * FROM facilitator_conversation_participants
+        WHERE conversation_id = %s AND is_hidden = 0
+        ORDER BY id ASC
+    """, (conversation_id,))
+
+
+def get_all_facilitator_conversations():
+    init_facilitator_conversations()
+    conn = get_connection()
+    return _fetchall(conn, """
+        SELECT c.*, e.event_name, h.name AS host_name
+        FROM facilitator_conversations c
+        LEFT JOIN events e ON c.event_id = e.event_id
+        LEFT JOIN hosts  h ON c.host_id  = h.host_id
+        ORDER BY c.created_at DESC
+    """)

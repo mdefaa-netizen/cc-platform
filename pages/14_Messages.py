@@ -5,8 +5,10 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from utils.database import (
     get_all_messages, mark_message_read, reply_to_message,
     get_unread_message_count, init_db, log_activity, add_notification,
-    init_messages, send_message, get_messages_for_person
+    init_messages, send_message, get_messages_for_person,
+    get_all_facilitator_conversations, get_conversation_messages,
 )
+from html import escape as _esc
 from utils.auth import require_auth, render_sidebar_user
 from utils.styles import inject_css, page_header
 
@@ -57,7 +59,10 @@ if _is_coord:
         </div>
         """, unsafe_allow_html=True)
 
-    tab_inbox, tab_all = st.tabs([f"📬 Unread ({len(unread)})", "📋 All Messages"])
+    tab_inbox, tab_all, tab_fac_convs = st.tabs(
+        [f"📬 Unread ({len(unread)})", "📋 All Messages",
+         "🤝 Host ↔ Facilitator (read-only)"]
+    )
 
     def render_message(m, show_reply=True):
         icon     = CATEGORY_ICONS.get(m.get("category","General"), "💬")
@@ -119,6 +124,45 @@ if _is_coord:
             st.caption(f"{len(filtered)} message(s)")
             for m in filtered:
                 render_message(m)
+
+    # Coordinator-only read-only view of host↔facilitator threads. Coordinator
+    # is a silent participant on each thread (is_hidden=1) and does NOT post
+    # here — that would reveal their presence. The coordinator continues to use
+    # the existing Message-Coordinator inbox for two-way work with hosts/facs.
+    with tab_fac_convs:
+        st.caption(
+            "Read-only oversight of host↔facilitator conversations. "
+            "Hosts and facilitators do not see you in these threads."
+        )
+        fac_convs = get_all_facilitator_conversations()
+        if not fac_convs:
+            st.info("No host↔facilitator conversations yet.")
+        else:
+            st.caption(f"{len(fac_convs)} conversation(s)")
+            for c in fac_convs:
+                ts = str(c.get("created_at",""))[:16] if c.get("created_at") else ""
+                ev = c.get("event_name","") or "—"
+                host_name = c.get("host_name","") or "Host"
+                with st.expander(
+                    f"🤝 {c.get('subject','')[:60]} · {host_name} · {ev} · {ts}"
+                ):
+                    msgs = get_conversation_messages(c["conversation_id"])
+                    if not msgs:
+                        st.caption("(no messages)")
+                    for m in msgs:
+                        m_ts = str(m.get("created_at",""))[:16] if m.get("created_at") else ""
+                        who = m.get("sender_name","") or m.get("sender_type","")
+                        st.markdown(
+                            f"**{_esc(who)}** "
+                            f"<span style='color:#888;font-size:0.8rem'>· {_esc(m_ts)}</span>",
+                            unsafe_allow_html=True,
+                        )
+                        st.markdown(
+                            f"<div style='background:#F3F4F6;padding:0.6rem 0.9rem;"
+                            f"border-radius:8px;margin:0.25rem 0 0.7rem;white-space:pre-wrap'>"
+                            f"{_esc(m.get('body',''))}</div>",
+                            unsafe_allow_html=True,
+                        )
 
 # ── CDFA / NHH: Send message to coordinator ──────────────────────────────────
 else:
