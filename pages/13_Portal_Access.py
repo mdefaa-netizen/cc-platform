@@ -124,8 +124,8 @@ with tab_grant:
             auto_pw    = gen_password()
             password   = st.text_input("Password *", value=auto_pw,
                                         help="Auto-generated — you can change it")
-            activate   = st.checkbox("Approve immediately", value=False,
-                                      help="Check to grant access right away, or leave unchecked to approve later")
+            activate   = st.checkbox("Approve immediately", value=True,
+                                      help="Check to grant access right away (default), or uncheck to create a pending account you'll approve later under 'Manage Access'")
         notes = st.text_input("Notes", placeholder="e.g., Concord event confirmed")
 
         if st.form_submit_button("🔑 Create Portal Access", use_container_width=True):
@@ -148,6 +148,15 @@ with tab_grant:
                     pname = opts.get(person_sel, "")
                     log_activity("Portal Access Created",
                                  f"{pname} (@{username}) — {'Active' if activate else 'Pending'}")
-                    st.success(f"Portal access created for **{pname}**!")
-                    st.warning(f"Share these credentials with {pname} (shown once only):")
-                    st.code(f"Username: {username}\nPassword: {password}")
+                    if activate:
+                        st.success(f"Portal access created and approved for **{pname}**!")
+                        st.warning(f"Share these credentials with {pname} (shown once only):")
+                        st.code(f"Username: {username}\nPassword: {password}")
+                    else:
+                        st.success(f"Portal access created for **{pname}** (pending approval).")
+                        st.error(
+                            f"⚠️ **DO NOT SHARE YET** — these credentials will NOT work until you "
+                            f"approve {pname} under the **Manage Access** tab. "
+                            f"Share them only after approval."
+                        )
+                        st.code(f"Username: {username}\nPassword: {password}\n# Status: PENDING APPROVAL — login will fail until approved")
