@@ -441,6 +441,19 @@ def init_all():
                 ON facilitator_conversation_participants (participant_type, participant_id)""")
             cur.execute("""CREATE INDEX IF NOT EXISTS idx_fc_messages_conv
                 ON facilitator_conversation_messages (conversation_id, created_at)""")
+            # message_hides — per-viewer hide for BOTH message systems.
+            # Code-enforced (no FK; one column would otherwise need to FK two
+            # different tables). Coordinator hard delete + per-viewer hide.
+            cur.execute("""CREATE TABLE IF NOT EXISTS message_hides (
+                id              SERIAL PRIMARY KEY,
+                message_system  TEXT NOT NULL,
+                message_id      INTEGER NOT NULL,
+                viewer_type     TEXT NOT NULL,
+                viewer_id       TEXT NOT NULL,
+                hidden_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(message_system, message_id, viewer_type, viewer_id))""")
+            cur.execute("""CREATE INDEX IF NOT EXISTS idx_message_hides_lookup
+                ON message_hides (message_system, viewer_type, viewer_id)""")
         conn.commit()
         _schema_initialised = True
     finally:
@@ -1491,7 +1504,10 @@ def reply_to_message(message_id, reply_body):
 
 
 def get_messages_for_person(sender_type, sender_id):
+    """Mirrors utils.database.get_messages_for_person — excludes rows the same
+    person has hidden via message_hides('legacy', ...)."""
     init_messages()
+    init_message_hides()
     conn = get_connection()
     if sender_id is None:
         return _fetchall(conn, """
@@ -1503,9 +1519,15 @@ def get_messages_for_person(sender_type, sender_id):
     return _fetchall(conn, """
         SELECT m.*, e.event_name FROM messages m
         LEFT JOIN events e ON m.event_id=e.event_id
+        LEFT JOIN message_hides h
+            ON h.message_system='legacy'
+            AND h.message_id   = m.message_id
+            AND h.viewer_type  = %s
+            AND h.viewer_id    = %s
         WHERE m.sender_type=%s AND m.sender_id=%s
+            AND h.id IS NULL
         ORDER BY m.created_at DESC
-    """, (sender_type, sender_id))
+    """, (sender_type, str(sender_id), sender_type, sender_id))
 
 
 def get_unread_message_count():
@@ -1746,8 +1768,25 @@ def get_conversations_for_participant(participant_type, participant_id):
     """, (participant_type, str(participant_id)))
 
 
-def get_conversation_messages(conversation_id):
+def get_conversation_messages(conversation_id, viewer_type=None, viewer_id=None):
+    """Mirrors utils.database.get_conversation_messages. When viewer_type +
+    viewer_id are supplied (host/facilitator views), rows hidden by that
+    viewer via message_hides('fac_conv', ...) drop out. Coordinator view
+    omits both args and sees everything."""
     init_facilitator_conversations()
+    if viewer_type and viewer_id is not None:
+        init_message_hides()
+        conn = get_connection()
+        return _fetchall(conn, """
+            SELECT m.* FROM facilitator_conversation_messages m
+            LEFT JOIN message_hides h
+                ON h.message_system='fac_conv'
+                AND h.message_id   = m.id
+                AND h.viewer_type  = %s
+                AND h.viewer_id    = %s
+            WHERE m.conversation_id = %s AND h.id IS NULL
+            ORDER BY m.created_at ASC, m.id ASC
+        """, (viewer_type, str(viewer_id), conversation_id))
     conn = get_connection()
     return _fetchall(conn, """
         SELECT * FROM facilitator_conversation_messages
@@ -1776,3 +1815,79 @@ def get_all_facilitator_conversations():
         LEFT JOIN hosts  h ON c.host_id  = h.host_id
         ORDER BY c.created_at DESC
     """)
+
+
+# ── Message hides + hard deletes (parity with utils.database) ─────────────────
+
+def init_message_hides():
+    if _schema_initialised:
+        return
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""CREATE TABLE IF NOT EXISTS message_hides (
+                id              SERIAL PRIMARY KEY,
+                message_system  TEXT NOT NULL,
+                message_id      INTEGER NOT NULL,
+                viewer_type     TEXT NOT NULL,
+                viewer_id       TEXT NOT NULL,
+                hidden_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(message_system, message_id, viewer_type, viewer_id))""")
+            cur.execute("""CREATE INDEX IF NOT EXISTS idx_message_hides_lookup
+                ON message_hides (message_system, viewer_type, viewer_id)""")
+        conn.commit()
+    finally:
+        _putconn(conn)
+
+
+def hide_message(message_system, message_id, viewer_type, viewer_id):
+    init_message_hides()
+    conn = get_connection()
+    _execute(conn, """
+        INSERT INTO message_hides
+            (message_system, message_id, viewer_type, viewer_id)
+        VALUES (%s,%s,%s,%s)
+        ON CONFLICT (message_system, message_id, viewer_type, viewer_id) DO NOTHING
+    """, (message_system, int(message_id), viewer_type, str(viewer_id)))
+
+
+def delete_message(message_id, deleted_by=""):
+    init_messages()
+    init_message_hides()
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM messages WHERE message_id=%s",
+                        (int(message_id),))
+            cur.execute("""DELETE FROM message_hides
+                WHERE message_system='legacy' AND message_id=%s""",
+                        (int(message_id),))
+        conn.commit()
+    finally:
+        _putconn(conn)
+    log_activity(
+        "Message Deleted",
+        f"message_system=legacy message_id={int(message_id)}",
+        user=deleted_by or "Coordinator",
+    )
+
+
+def delete_conversation_message(message_id, deleted_by=""):
+    init_facilitator_conversations()
+    init_message_hides()
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM facilitator_conversation_messages WHERE id=%s",
+                        (int(message_id),))
+            cur.execute("""DELETE FROM message_hides
+                WHERE message_system='fac_conv' AND message_id=%s""",
+                        (int(message_id),))
+        conn.commit()
+    finally:
+        _putconn(conn)
+    log_activity(
+        "Message Deleted",
+        f"message_system=fac_conv message_id={int(message_id)}",
+        user=deleted_by or "Coordinator",
+    )

@@ -14,6 +14,7 @@ from utils.database import (
     get_visible_participants,
     get_facilitator, update_facilitator,
     get_event, update_event,
+    hide_message,
 )
 from utils.mileage import (
     MILEAGE_RATE, FACILITATOR_STIPEND,
@@ -297,6 +298,14 @@ with tab_msg:
                     st.caption(f"Replied: {m.get('replied_at','')[:16] if m.get('replied_at') else ''}")
                 else:
                     st.caption("⏳ Awaiting reply from Coordinator")
+                # "🙈 Hide from my view" — self-only; the coordinator still
+                # sees this row in their inbox. Reversible only via the DB.
+                if st.button("🙈 Hide from my view",
+                             key=f"hide_legacy_{m['message_id']}",
+                             use_container_width=True):
+                    hide_message("legacy", m["message_id"],
+                                 person_type, person_id)
+                    st.rerun()
 
 # ── Contact Facilitator(s) / Messages from Hosts ─────────────────────────────
 # Host branch: start a thread with the facilitator(s) of an event the host is on.
@@ -395,7 +404,10 @@ with tab_fac:
                     if fac_names:
                         st.caption(f"With: {', '.join(fac_names)}")
 
-                    for m in get_conversation_messages(c["conversation_id"]):
+                    # viewer args wire in per-viewer hides; rows hidden by
+                    # this host are filtered out at the read path.
+                    for m in get_conversation_messages(
+                            c["conversation_id"], "host", person_id):
                         m_ts = str(m.get("created_at",""))[:16] if m.get("created_at") else ""
                         is_me = (m.get("sender_type") == "host" and str(m.get("sender_id")) == str(person_id))
                         align = "right" if is_me else "left"
@@ -411,6 +423,13 @@ with tab_fac:
                             f"</div></div>",
                             unsafe_allow_html=True,
                         )
+                        # Self-only hide. The facilitator and coordinator
+                        # still see this row.
+                        if st.button("🙈 Hide from my view",
+                                     key=f"hide_fc_host_{m['id']}"):
+                            hide_message("fac_conv", m["id"],
+                                         "host", person_id)
+                            st.rerun()
 
                     reply_key = f"host_reply_{c['conversation_id']}"
                     reply = st.text_area("Reply", key=reply_key, height=80,
@@ -462,7 +481,8 @@ with tab_fac:
                         parts_caption += f" · Co-facilitator(s): {', '.join(other_fac_names)}"
                     st.caption(parts_caption)
 
-                    for m in get_conversation_messages(c["conversation_id"]):
+                    for m in get_conversation_messages(
+                            c["conversation_id"], "facilitator", person_id):
                         m_ts = str(m.get("created_at",""))[:16] if m.get("created_at") else ""
                         is_me = (m.get("sender_type") == "facilitator"
                                  and str(m.get("sender_id")) == str(person_id))
@@ -479,6 +499,11 @@ with tab_fac:
                             f"</div></div>",
                             unsafe_allow_html=True,
                         )
+                        if st.button("🙈 Hide from my view",
+                                     key=f"hide_fc_fac_{m['id']}"):
+                            hide_message("fac_conv", m["id"],
+                                         "facilitator", person_id)
+                            st.rerun()
 
                     reply_key = f"fac_reply_{c['conversation_id']}"
                     reply = st.text_area("Reply", key=reply_key, height=80,

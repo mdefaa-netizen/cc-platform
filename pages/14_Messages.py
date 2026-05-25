@@ -7,6 +7,7 @@ from utils.database import (
     get_unread_message_count, init_db, log_activity, add_notification,
     init_messages, send_message, get_messages_for_person,
     get_all_facilitator_conversations, get_conversation_messages,
+    delete_message, delete_conversation_message,
 )
 from html import escape as _esc
 from utils.auth import require_auth, render_sidebar_user
@@ -105,6 +106,29 @@ if _is_coord:
                         st.success("✅ Reply sent!")
                         st.rerun()
 
+            # Coordinator hard-delete. Gated on _is_coord (this whole render
+            # branch already runs only when _is_coord is True; we keep the
+            # explicit `if _is_coord:` here as defense-in-depth so the control
+            # can't appear if this helper is ever called from a non-coord
+            # branch). Two-click confirm pattern via a checkbox to prevent
+            # accidental clicks.
+            if _is_coord:
+                st.markdown("---")
+                confirm_key = f"del_confirm_{m['message_id']}"
+                if st.checkbox("⚠️ Confirm permanent delete",
+                                key=confirm_key):
+                    if st.button("🗑️ Delete permanently",
+                                 key=f"del_btn_{m['message_id']}",
+                                 use_container_width=True,
+                                 type="primary"):
+                        delete_message(
+                            m["message_id"],
+                            deleted_by=st.session_state.get(
+                                "user_email", "Coordinator"),
+                        )
+                        st.success("🗑️ Message deleted.")
+                        st.rerun()
+
     with tab_inbox:
         if not unread:
             st.success("📭 No unread messages. All caught up!")
@@ -125,14 +149,17 @@ if _is_coord:
             for m in filtered:
                 render_message(m)
 
-    # Coordinator-only read-only view of host↔facilitator threads. Coordinator
-    # is a silent participant on each thread (is_hidden=1) and does NOT post
-    # here — that would reveal their presence. The coordinator continues to use
-    # the existing Message-Coordinator inbox for two-way work with hosts/facs.
+    # Coordinator oversight of host↔facilitator threads. Coordinator is a
+    # silent participant on each thread (is_hidden=1) and does NOT post here —
+    # posting would reveal their presence. The coordinator MAY now permanently
+    # delete individual messages; a hard delete removes the row outright,
+    # leaving no "deleted by X" tombstone so the silent-CC guarantee holds.
+    # The audit trail lives in activity_log.
     with tab_fac_convs:
         st.caption(
-            "Read-only oversight of host↔facilitator conversations. "
-            "Hosts and facilitators do not see you in these threads."
+            "Oversight of host↔facilitator conversations. You can permanently "
+            "delete a message here, but you cannot reply — hosts and "
+            "facilitators do not see you in these threads."
         )
         fac_convs = get_all_facilitator_conversations()
         if not fac_convs:
@@ -146,6 +173,8 @@ if _is_coord:
                 with st.expander(
                     f"🤝 {c.get('subject','')[:60]} · {host_name} · {ev} · {ts}"
                 ):
+                    # No viewer_type/viewer_id — coordinator sees every turn
+                    # regardless of host/facilitator per-viewer hides.
                     msgs = get_conversation_messages(c["conversation_id"])
                     if not msgs:
                         st.caption("(no messages)")
@@ -159,10 +188,28 @@ if _is_coord:
                         )
                         st.markdown(
                             f"<div style='background:#F3F4F6;padding:0.6rem 0.9rem;"
-                            f"border-radius:8px;margin:0.25rem 0 0.7rem;white-space:pre-wrap'>"
+                            f"border-radius:8px;margin:0.25rem 0 0.4rem;white-space:pre-wrap'>"
                             f"{_esc(m.get('body',''))}</div>",
                             unsafe_allow_html=True,
                         )
+                        if _is_coord:
+                            confirm_key = f"fc_del_confirm_{m['id']}"
+                            cdel_a, cdel_b = st.columns([1, 1])
+                            with cdel_a:
+                                if st.checkbox("⚠️ Confirm permanent delete",
+                                                key=confirm_key):
+                                    with cdel_b:
+                                        if st.button("🗑️ Delete permanently",
+                                                     key=f"fc_del_btn_{m['id']}",
+                                                     use_container_width=True,
+                                                     type="primary"):
+                                            delete_conversation_message(
+                                                m["id"],
+                                                deleted_by=st.session_state.get(
+                                                    "user_email", "Coordinator"),
+                                            )
+                                            st.success("🗑️ Message deleted.")
+                                            st.rerun()
 
 # ── CDFA / NHH: Send message to coordinator ──────────────────────────────────
 else:

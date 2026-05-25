@@ -1034,8 +1034,12 @@ def reply_to_message(message_id, reply_body):
     conn.commit(); conn.close()
 
 def get_messages_for_person(sender_type, sender_id):
+    """Messages this person sent. Excludes rows the SAME person has hidden
+    from their own view via message_hides('legacy', ..., sender_type,
+    sender_id) — the coordinator's view (get_all_messages) still sees them."""
     conn = get_connection()
     init_messages()
+    init_message_hides()
     if sender_id is None:
         rows = conn.execute("""
             SELECT m.*, e.event_name FROM messages m
@@ -1047,9 +1051,15 @@ def get_messages_for_person(sender_type, sender_id):
         rows = conn.execute("""
             SELECT m.*, e.event_name FROM messages m
             LEFT JOIN events e ON m.event_id=e.event_id
+            LEFT JOIN message_hides h
+                ON h.message_system='legacy'
+                AND h.message_id   = m.message_id
+                AND h.viewer_type  = ?
+                AND h.viewer_id    = ?
             WHERE m.sender_type=? AND m.sender_id=?
+                AND h.id IS NULL
             ORDER BY m.created_at DESC
-        """, (sender_type, sender_id)).fetchall()
+        """, (sender_type, str(sender_id), sender_type, sender_id)).fetchall()
     conn.close()
     return [dict(r) for r in rows]
 
@@ -1283,8 +1293,28 @@ def get_conversations_for_participant(participant_type, participant_id):
         return [dict(r) for r in rows]
 
 
-def get_conversation_messages(conversation_id):
+def get_conversation_messages(conversation_id, viewer_type=None, viewer_id=None):
+    """Ordered turns in a Contact-Facilitator conversation. When viewer_type
+    + viewer_id are supplied (host or facilitator views), rows that viewer
+    has hidden via message_hides('fac_conv', id, viewer_type, viewer_id) are
+    excluded. When omitted (coordinator's read-only oversight view), every
+    row is returned regardless of hides — and hard-deleted rows are simply
+    no longer there."""
     init_facilitator_conversations()
+    if viewer_type and viewer_id is not None:
+        init_message_hides()
+        with _safe_conn() as conn:
+            rows = conn.execute("""
+                SELECT m.* FROM facilitator_conversation_messages m
+                LEFT JOIN message_hides h
+                    ON h.message_system='fac_conv'
+                    AND h.message_id   = m.id
+                    AND h.viewer_type  = ?
+                    AND h.viewer_id    = ?
+                WHERE m.conversation_id = ? AND h.id IS NULL
+                ORDER BY m.created_at ASC, m.id ASC
+            """, (viewer_type, str(viewer_id), conversation_id)).fetchall()
+            return [dict(r) for r in rows]
     with _safe_conn() as conn:
         rows = conn.execute("""
             SELECT * FROM facilitator_conversation_messages
@@ -1322,9 +1352,105 @@ def get_all_facilitator_conversations():
         return [dict(r) for r in rows]
 
 
+# ── Message hides — per-viewer hide-from-my-view across BOTH message systems ──
+# Single table for both the legacy `messages` rows and the new
+# `facilitator_conversation_messages` rows, discriminated by `message_system`.
+# Code-enforced (no FK) because one column would otherwise need to FK two tables.
+# Coordinator hard-delete removes the underlying row from its own table and
+# then cleans up any hides pointing at it; per-viewer hide just INSERT-OR-IGNOREs.
+
+def init_message_hides():
+    conn = get_connection()
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS message_hides (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            message_system  TEXT NOT NULL,   -- 'legacy' | 'fac_conv'
+            message_id      INTEGER NOT NULL,
+            viewer_type     TEXT NOT NULL,   -- 'host' | 'facilitator'
+            viewer_id       TEXT NOT NULL,   -- str(host_id) / str(facilitator_id)
+            hidden_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(message_system, message_id, viewer_type, viewer_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_message_hides_lookup
+            ON message_hides (message_system, viewer_type, viewer_id);
+    """)
+    conn.commit(); conn.close()
+
+
+def hide_message(message_system, message_id, viewer_type, viewer_id):
+    """Mark a message as hidden for this viewer only. INSERT OR IGNORE so
+    repeat clicks are no-ops. The coordinator and other participants still
+    see the row — this is per-viewer, not a global delete."""
+    init_message_hides()
+    with _safe_conn() as conn:
+        conn.execute("""
+            INSERT OR IGNORE INTO message_hides
+                (message_system, message_id, viewer_type, viewer_id)
+            VALUES (?,?,?,?)
+        """, (message_system, int(message_id), viewer_type, str(viewer_id)))
+        conn.commit()
+
+
+def _is_message_hidden_for(message_system, message_id, viewer_type, viewer_id):
+    """Predicate used by tests and by render code that decides whether to
+    show an individual row outside the LEFT-JOIN read path."""
+    init_message_hides()
+    with _safe_conn() as conn:
+        row = conn.execute("""
+            SELECT 1 FROM message_hides
+            WHERE message_system=? AND message_id=? AND viewer_type=? AND viewer_id=?
+            LIMIT 1
+        """, (message_system, int(message_id), viewer_type, str(viewer_id))).fetchone()
+        return row is not None
+
+
+def delete_message(message_id, deleted_by=""):
+    """Coordinator-only hard delete from the legacy `messages` table. Writes
+    an audit entry to `activity_log` and removes any per-viewer hides that
+    pointed at the now-gone row."""
+    init_messages()
+    init_message_hides()
+    with _safe_conn() as conn:
+        conn.execute("DELETE FROM messages WHERE message_id=?", (int(message_id),))
+        conn.execute("""
+            DELETE FROM message_hides
+            WHERE message_system='legacy' AND message_id=?
+        """, (int(message_id),))
+        conn.commit()
+    log_activity(
+        "Message Deleted",
+        f"message_system=legacy message_id={int(message_id)}",
+        user=deleted_by or "Coordinator",
+    )
+
+
+def delete_conversation_message(message_id, deleted_by=""):
+    """Coordinator-only hard delete from the Contact-Facilitator thread
+    table. No 'deleted by' tombstone is written into the thread — the
+    coordinator stays a silent participant. The audit trail is in
+    `activity_log`."""
+    init_facilitator_conversations()
+    init_message_hides()
+    with _safe_conn() as conn:
+        conn.execute(
+            "DELETE FROM facilitator_conversation_messages WHERE id=?",
+            (int(message_id),),
+        )
+        conn.execute("""
+            DELETE FROM message_hides
+            WHERE message_system='fac_conv' AND message_id=?
+        """, (int(message_id),))
+        conn.commit()
+    log_activity(
+        "Message Deleted",
+        f"message_system=fac_conv message_id={int(message_id)}",
+        user=deleted_by or "Coordinator",
+    )
+
+
 def init_all():
     """Initialise the full SQLite schema for local dev — mirrors
-    supabase_db.init_all(). All seven helpers are idempotent. init_db()
+    supabase_db.init_all(). All eight helpers are idempotent. init_db()
     also calls init_users() internally; the explicit call here is a
     harmless idempotent repeat that keeps this aggregator self-documenting.
     Dependency order matters: init_db() must create `events` before
@@ -1338,6 +1464,7 @@ def init_all():
     init_portal_access()  # portal_access
     init_messages()       # messages
     init_facilitator_conversations()  # facilitator_conversations + messages + participants
+    init_message_hides()  # message_hides (legacy + fac_conv per-viewer hide table)
 
 
 # ── PostgreSQL override ───────────────────────────────────────────────────────
