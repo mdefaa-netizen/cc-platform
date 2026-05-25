@@ -1,5 +1,5 @@
 import streamlit as st
-import sys, os, requests
+import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from utils.database import (
@@ -13,6 +13,12 @@ from utils.database import (
 from utils.auth import require_auth, render_sidebar_user
 from utils.styles import inject_css, page_header
 from utils.format_helpers import format_date
+from utils.mileage import (
+    MILEAGE_RATE, FACILITATOR_STIPEND,
+    get_maps_api_key as _get_maps_api_key,
+    calculate_distance_google as _calculate_distance_google,
+    calculate_distance_fallback as _calculate_distance_fallback,
+)
 
 st.set_page_config(page_title="Payments · CC Platform", page_icon="💰", layout="wide")
 inject_css()
@@ -35,10 +41,14 @@ page_header("💰 Payment Tracking", "Track and manage payments to facilitators"
 facs = get_all_facilitators()
 
 # ── KPI row ────────────────────────────────────────────────────────────────────
-total_pending   = sum(f.get("payment_amount",0) or 0 for f in facs if f.get("payment_status")=="Pending")
-total_approved  = sum(f.get("payment_amount",0) or 0 for f in facs if f.get("payment_status")=="Approved")
-total_paid      = sum(f.get("payment_amount",0) or 0 for f in facs if f.get("payment_status")=="Paid")
-total_confirmed = sum(f.get("payment_amount",0) or 0 for f in facs if f.get("payment_status")=="Confirmed")
+# Stipend is now the locked program constant FACILITATOR_STIPEND ($400/facilitator);
+# the per-facilitator `payment_amount` column is no longer read here. Each KPI
+# bucket counts how many facilitators are in a given payment_status and
+# multiplies by the constant — same shape, locked amount.
+total_pending   = sum(FACILITATOR_STIPEND for f in facs if f.get("payment_status")=="Pending")
+total_approved  = sum(FACILITATOR_STIPEND for f in facs if f.get("payment_status")=="Approved")
+total_paid      = sum(FACILITATOR_STIPEND for f in facs if f.get("payment_status")=="Paid")
+total_confirmed = sum(FACILITATOR_STIPEND for f in facs if f.get("payment_status")=="Confirmed")
 total_program   = total_pending + total_approved + total_paid + total_confirmed
 total_outstanding = total_pending + total_approved + total_paid  # not yet confirmed
 
@@ -113,7 +123,10 @@ with tab_summary:
 
         for f in facs:
             fid        = f["facilitator_id"]
-            stipend    = f.get("payment_amount", 0) or 0
+            # Stipend is locked to the program constant — facilitators.payment_amount
+            # is intentionally NOT read here. The amount each facilitator is owed for
+            # showing up is the same $400 regardless of what's stored on the row.
+            stipend    = FACILITATOR_STIPEND
             mil_amt    = mileage_by_fac.get(fid, {"amount": 0.0})["amount"]
             total_owed = stipend + mil_amt
             status     = f.get("payment_status", "Pending")
@@ -194,7 +207,7 @@ with tab_list:
     else:
         for f in filtered:
             fid = f["facilitator_id"]
-            stipend = f.get("payment_amount", 0) or 0
+            stipend = FACILITATOR_STIPEND  # locked program constant
             mil_amt = mileage_by_fac.get(fid, {"amount": 0.0})["amount"]
             check_total = stipend + mil_amt
             badge = STATUS_ICONS.get(f.get("payment_status",""), "⚪")
@@ -206,7 +219,7 @@ with tab_list:
                     st.markdown(f"**Phone:** {f.get('phone','—')}")
                 with c2:
                     st.markdown(f"**Check Payable To:** {f.get('check_payable_to','—')}")
-                    st.markdown(f"**Stipend:** ${stipend:,.2f}")
+                    st.markdown(f"**Stipend:** ${stipend:,.2f} *(program stipend)*")
                     st.markdown(f"**Mileage Reimbursement:** ${mil_amt:,.2f}" if mil_amt > 0 else "**Mileage Reimbursement:** —")
                     st.markdown(f"**Check Total:** ${check_total:,.2f}")
                     st.markdown(f"**Status:** {badge} {f.get('payment_status','—')}")
@@ -220,13 +233,18 @@ with tab_list:
                     btn_cols = st.columns(4)
                     status = f.get("payment_status","Pending")
 
+                    # Activity-log / notification dollar amounts report the
+                    # locked stipend + this facilitator's mileage total, not the
+                    # legacy facilitators.payment_amount column.
+                    _stipend_plus_mileage = stipend + mil_amt
+
                     with btn_cols[0]:
                         if status != "Approved" and status != "Confirmed":
                             if st.button("✅ Approve", key=f"approve_{f['facilitator_id']}",
                                          use_container_width=True):
                                 update_facilitator(f["facilitator_id"], {**f, "payment_status":"Approved"})
-                                log_activity("Payment Approved", f"{f['name']} — ${f.get('payment_amount',0):.2f}")
-                                add_notification(f"Payment approved for {f['name']}: ${f.get('payment_amount',0):.2f}", "all")
+                                log_activity("Payment Approved", f"{f['name']} — ${_stipend_plus_mileage:.2f}")
+                                add_notification(f"Payment approved for {f['name']}: ${_stipend_plus_mileage:.2f}", "all")
                                 st.success("✅ Approved!")
                                 st.rerun()
 
@@ -238,8 +256,8 @@ with tab_list:
                                 updated = {**f, "payment_status":"Paid",
                                            "payment_date": str(datetime.date.today())}
                                 update_facilitator(f["facilitator_id"], updated)
-                                log_activity("Payment Sent", f"{f['name']} — ${f.get('payment_amount',0):.2f}")
-                                add_notification(f"Payment sent to {f['name']}: ${f.get('payment_amount',0):.2f} — awaiting confirmation", "all")
+                                log_activity("Payment Sent", f"{f['name']} — ${_stipend_plus_mileage:.2f}")
+                                add_notification(f"Payment sent to {f['name']}: ${_stipend_plus_mileage:.2f} — awaiting confirmation", "all")
                                 st.success("💸 Marked as Paid — awaiting facilitator confirmation!")
                                 st.rerun()
 
@@ -249,8 +267,8 @@ with tab_list:
                                          use_container_width=True):
                                 updated = {**f, "payment_status":"Confirmed"}
                                 update_facilitator(f["facilitator_id"], updated)
-                                log_activity("Payment Confirmed", f"{f['name']} confirmed receipt of ${f.get('payment_amount',0):.2f}")
-                                add_notification(f"Payment confirmed by {f['name']}: ${f.get('payment_amount',0):.2f} — deducted from outstanding balance", "all")
+                                log_activity("Payment Confirmed", f"{f['name']} confirmed receipt of ${_stipend_plus_mileage:.2f}")
+                                add_notification(f"Payment confirmed by {f['name']}: ${_stipend_plus_mileage:.2f} — deducted from outstanding balance", "all")
                                 st.success("🟢 Payment confirmed! Deducted from outstanding balance.")
                                 st.rerun()
 
@@ -272,9 +290,9 @@ with tab_update:
                                            ["Pending","Approved","Paid","Confirmed"],
                                            index=["Pending","Approved","Paid","Confirmed"].index(
                                                f.get("payment_status","Pending")))
-                new_amount = st.number_input("Payment Amount ($)",
-                                              value=float(f.get("payment_amount",0)),
-                                              min_value=0.0, step=50.0)
+                # Stipend is the locked program constant — display only, not editable.
+                # Editing the dollar amount per facilitator is intentionally removed.
+                st.markdown(f"**Stipend:** ${FACILITATOR_STIPEND:,.2f} *(program stipend — locked)*")
             with c2:
                 import datetime
                 pdate_val = None
@@ -287,14 +305,17 @@ with tab_update:
             new_notes = st.text_area("Notes", value=f.get("notes","") or "")
 
             if st.form_submit_button("💾 Update Payment", use_container_width=True):
+                # NOTE: payment_amount is intentionally NOT written here — the
+                # stipend is the locked program constant and is no longer a
+                # per-facilitator editable field. Status / date / payee /
+                # notes still flow through as before.
                 updated = {**f, "payment_status": new_status,
-                           "payment_amount": new_amount,
                            "payment_date":   str(new_date) if new_date else None,
                            "check_payable_to": new_payto,
                            "notes": new_notes}
                 update_facilitator(sel, updated)
                 log_activity("Payment Updated",
-                             f"{f.get('name','')} → {new_status} — ${new_amount:.2f}")
+                             f"{f.get('name','')} → {new_status} — ${FACILITATOR_STIPEND:.2f}")
                 st.success(f"✅ Payment updated for {f.get('name','')} → {new_status}")
                 st.rerun()
 
@@ -336,71 +357,9 @@ with tab_triggers:
                     st.warning(f"Missing: {', '.join(missing)}")
 
 # ── Tab: Mileage ───────────────────────────────────────────────────────────────
-IRS_RATE_2026 = 0.725  # $0.725 per mile — IRS 2026 standard rate
-
-def _get_maps_api_key():
-    try:
-        return st.secrets.get("GOOGLE_MAPS_API_KEY", "")
-    except Exception:
-        return st.session_state.get("google_maps_key", "")
-
-def _calculate_distance_google(origin, destination, api_key):
-    """Use Google Maps Distance Matrix API to get driving distance in miles."""
-    url = "https://maps.googleapis.com/maps/api/distancematrix/json"
-    params = {
-        "origins": origin,
-        "destinations": destination,
-        "units": "imperial",
-        "mode": "driving",
-        "key": api_key,
-    }
-    try:
-        resp = requests.get(url, params=params, timeout=10)
-        data = resp.json()
-        if data["status"] == "OK":
-            element = data["rows"][0]["elements"][0]
-            if element["status"] == "OK":
-                distance_text = element["distance"]["text"]
-                distance_miles = element["distance"]["value"] / 1609.344
-                return distance_miles, distance_text, None
-            else:
-                return None, None, f"Route not found: {element['status']}"
-        else:
-            return None, None, f"API error: {data['status']}"
-    except Exception as e:
-        return None, None, str(e)
-
-def _calculate_distance_fallback(origin, destination):
-    """Fallback: use OpenStreetMap Nominatim + Haversine for approximate distance."""
-    import math
-    def geocode(address):
-        url = "https://nominatim.openstreetmap.org/search"
-        params = {"q": address, "format": "json", "limit": 1}
-        headers = {"User-Agent": "CCPlatform/1.0"}
-        try:
-            r = requests.get(url, params=params, headers=headers, timeout=10)
-            results = r.json()
-            if results:
-                return float(results[0]["lat"]), float(results[0]["lon"])
-        except Exception:
-            pass
-        return None, None
-
-    lat1, lon1 = geocode(origin)
-    lat2, lon2 = geocode(destination)
-
-    if not all([lat1, lon1, lat2, lon2]):
-        return None, None, "Could not geocode one or both addresses."
-
-    R = 3958.8  # Earth radius in miles
-    dlat = math.radians(lat2 - lat1)
-    dlon = math.radians(lon2 - lon1)
-    a = (math.sin(dlat / 2) ** 2
-         + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2))
-         * math.sin(dlon / 2) ** 2)
-    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
-    distance = R * c * 1.2  # +20% for road routing vs straight line
-    return distance, f"~{distance:.1f} mi (estimated)", None
+# Rate and distance helpers now live in utils/mileage.py so the portal, this
+# page, and any future surface share one source of truth. Aliased to underscore
+# names here for back-compat with the original local-symbol references below.
 
 with tab_mileage:
     st.markdown("### 🚗 Mileage Reimbursement")
@@ -503,7 +462,7 @@ with tab_mileage:
             st.markdown("---")
             col_r1, col_r2 = st.columns(2)
             with col_r1:
-                rate = st.number_input("Rate per mile ($)", value=IRS_RATE_2026,
+                rate = st.number_input("Rate per mile ($)", value=MILEAGE_RATE,
                                         min_value=0.01, step=0.005, format="%.3f",
                                         help="2026 IRS Standard Rate: $0.725/mile",
                                         key="mil_rate")

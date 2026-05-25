@@ -12,6 +12,12 @@ from utils.database import (
     create_facilitator_conversation, add_conversation_message,
     get_conversations_for_participant, get_conversation_messages,
     get_visible_participants,
+    get_facilitator, update_facilitator,
+    get_event, update_event,
+)
+from utils.mileage import (
+    MILEAGE_RATE, FACILITATOR_STIPEND,
+    calculate_round_trip_miles, estimate_reimbursement,
 )
 from utils.auth import require_auth, render_sidebar_user
 from utils.styles import inject_css
@@ -160,13 +166,17 @@ if notifs:
 # Host-only tab "Contact Facilitator(s)" surfaces a two-way thread with the
 # facilitator(s) of an event the host is on. The facilitator inbox lives in the
 # facilitator branch further below.
+# Extra address-entry tab: hosts edit their event's venue address; facilitators
+# edit their own home address and see a per-event travel/reimbursement estimate.
 if person_type == "host":
-    tab_cal, tab_msg, tab_fac, tab_feedback = st.tabs(
-        ["📅 My Events", "💬 Message Coordinator", "🤝 Contact Facilitator(s)", "📝 Submit Feedback"]
+    tab_cal, tab_msg, tab_fac, tab_addr, tab_feedback = st.tabs(
+        ["📅 My Events", "💬 Message Coordinator", "🤝 Contact Facilitator(s)",
+         "🏠 Event Venue Address", "📝 Submit Feedback"]
     )
 else:
-    tab_cal, tab_msg, tab_fac, tab_feedback = st.tabs(
-        ["📅 My Events", "💬 Message Coordinator", "📨 Messages from Hosts", "📝 Submit Feedback"]
+    tab_cal, tab_msg, tab_fac, tab_addr, tab_feedback = st.tabs(
+        ["📅 My Events", "💬 Message Coordinator", "📨 Messages from Hosts",
+         "🚗 My Travel & Reimbursement", "📝 Submit Feedback"]
     )
 
 # ── Calendar / My Events ───────────────────────────────────────────────────────
@@ -491,6 +501,167 @@ with tab_fac:
                                 )
                             st.success("✅ Reply sent.")
                             st.rerun()
+
+# ── Address entry: host venue / facilitator home + reimbursement estimate ────
+# Self-only edits. The fetch-then-merge pattern (get_*, dict-update with the
+# new field, full update_*) keeps every unrelated column intact and matches
+# how pages/3_Hosts.py and pages/4_Facilitators.py call update_*.
+with tab_addr:
+    if person_type == "host":
+        st.markdown("### Event Venue Address")
+        st.caption(
+            "This address is the venue for your event. It's used to calculate "
+            "your facilitator's travel reimbursement."
+        )
+
+        host_events_for_addr = [
+            e for e in get_all_events() if e.get("host_id") == person_id
+        ]
+        if not host_events_for_addr:
+            st.info("No events assigned to you yet — once you have one, you can set its venue here.")
+        else:
+            for e in host_events_for_addr:
+                ev_label = f"{e['event_name']} · {format_date(e['event_date'])}"
+                with st.expander(f"🏠 {ev_label}", expanded=False):
+                    with st.form(f"venue_form_{e['event_id']}"):
+                        v_addr = st.text_input(
+                            "Venue address (street)",
+                            value=e.get("venue_address","") or "",
+                            placeholder="45 Green Street",
+                            key=f"venue_addr_{e['event_id']}",
+                        )
+                        v_city = st.text_input(
+                            "City",
+                            value=e.get("city","") or "",
+                            placeholder="Concord",
+                            key=f"venue_city_{e['event_id']}",
+                        )
+                        if st.form_submit_button("💾 Save venue address",
+                                                 use_container_width=True):
+                            # Re-fetch so we don't clobber any field that changed
+                            # since the page loaded. Guard: only this host's event.
+                            fresh = get_event(e["event_id"])
+                            if not fresh or fresh.get("host_id") != person_id:
+                                st.error("You can only edit venues for events you host.")
+                            else:
+                                merged = {**fresh,
+                                          "venue_address": v_addr,
+                                          "city": v_city}
+                                update_event(e["event_id"], merged)
+                                st.success("✅ Venue address saved.")
+                                st.rerun()
+
+    else:
+        # Facilitator branch: edit own home address + see per-event estimates.
+        st.markdown("### My Home Address")
+        st.caption(
+            "Used to estimate driving distance from your home to each event "
+            "venue. The coordinator's Payments page is the official record; "
+            "the numbers below are an estimate."
+        )
+
+        me = get_facilitator(person_id) or {}
+        with st.form("fac_addr_form"):
+            col_a, col_b = st.columns(2)
+            with col_a:
+                f_addr = st.text_input("Street address",
+                                        value=me.get("address","") or "",
+                                        placeholder="123 Main St")
+                f_city = st.text_input("City",
+                                        value=me.get("city","") or "",
+                                        placeholder="Concord")
+            with col_b:
+                f_state = st.text_input("State",
+                                         value=me.get("state","NH") or "NH")
+                f_zip = st.text_input("ZIP code",
+                                       value=me.get("zip_code","") or "",
+                                       placeholder="03301")
+
+            if st.form_submit_button("💾 Save home address",
+                                     use_container_width=True):
+                # Re-fetch and guard: only this facilitator's own row.
+                fresh = get_facilitator(person_id)
+                if not fresh or fresh.get("facilitator_id") != person_id:
+                    st.error("You can only edit your own profile.")
+                else:
+                    merged = {**fresh,
+                              "address": f_addr,
+                              "city": f_city,
+                              "state": f_state or "NH",
+                              "zip_code": f_zip}
+                    update_facilitator(person_id, merged)
+                    st.success("✅ Home address saved.")
+                    st.rerun()
+
+        st.markdown("---")
+        st.markdown("### Estimated Reimbursement per Event")
+        st.caption(
+            f"Formula: round-trip miles × ${MILEAGE_RATE:.3f}/mi + "
+            f"${FACILITATOR_STIPEND:,.2f} program stipend. "
+            "These are **estimates** — the coordinator's Payments page is the official record."
+        )
+
+        my_facilitator_events = []
+        for e in get_all_events():
+            facs = get_event_facilitators(e["event_id"])
+            if any(f["facilitator_id"] == person_id for f in facs):
+                my_facilitator_events.append(e)
+
+        if not my_facilitator_events:
+            st.info("You aren't on any events yet — once you are, estimates will appear here.")
+        else:
+            # Build home origin from the just-saved (or pre-existing) profile.
+            home_parts = [me.get("address",""), me.get("city",""),
+                          me.get("state","NH"), me.get("zip_code","")]
+            home_addr = ", ".join(p for p in home_parts if p)
+
+            for e in my_facilitator_events:
+                ev_label = f"{e['event_name']} · {format_date(e['event_date'])}"
+                with st.expander(f"🚗 {ev_label}", expanded=False):
+                    venue_parts = [e.get("venue_address",""), e.get("city",""), "NH"]
+                    venue_addr = ", ".join(p for p in venue_parts if p)
+
+                    if not home_addr:
+                        st.warning("Add your home address above to see an estimate.")
+                        continue
+                    if not e.get("venue_address") and not e.get("city"):
+                        st.info("Awaiting venue address from your host.")
+                        continue
+
+                    calc_key = f"fac_estimate_{e['event_id']}"
+                    if st.button("🗺️ Calculate estimate",
+                                 key=f"fac_calc_{e['event_id']}",
+                                 use_container_width=True):
+                        with st.spinner("Calculating driving distance..."):
+                            rt, text, err = calculate_round_trip_miles(home_addr, venue_addr)
+                        if err or rt is None:
+                            st.session_state[calc_key] = {"error": err or "Distance unavailable."}
+                        else:
+                            est = estimate_reimbursement(rt)
+                            st.session_state[calc_key] = {
+                                "round_trip_miles": rt,
+                                "text": text,
+                                **est,
+                            }
+
+                    cached = st.session_state.get(calc_key)
+                    if cached:
+                        if "error" in cached:
+                            st.error(f"❌ {cached['error']}")
+                        else:
+                            r1, r2, r3, r4 = st.columns(4)
+                            with r1:
+                                st.metric("Round trip", f"{cached['round_trip_miles']:.1f} mi")
+                            with r2:
+                                st.metric("Mileage", f"${cached['mileage']:,.2f}")
+                            with r3:
+                                st.metric("Stipend", f"${cached['stipend']:,.2f}")
+                            with r4:
+                                st.metric("Estimated total", f"${cached['total']:,.2f}")
+                            st.caption(
+                                f"From: {home_addr} → To: {venue_addr} · "
+                                f"Method: {cached.get('text','')}"
+                            )
 
 # ── Submit Feedback ────────────────────────────────────────────────────────────
 with tab_feedback:
