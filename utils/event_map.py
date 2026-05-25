@@ -26,11 +26,21 @@ CENTER = (43.97, -71.57)
 ZOOM = 8
 TILES = "CartoDB positron"
 
-# New Hampshire state bounding box — used by fit_bounds so the initial view
-# frames NH itself (not the whole Northeast US) and by max_bounds so panning
-# stays around the state. SW corner (lat, lon) → NE corner (lat, lon).
+# New Hampshire state bounding box — used by fit_bounds as the FALLBACK when
+# no events have plotable locations, and by max_bounds so panning stays around
+# the state. SW corner (lat, lon) → NE corner (lat, lon).
+#
+# Primary framing comes from fit_bounds(points) on the actual event markers,
+# so the opening view fills with the events themselves (typically clustered in
+# central/southern NH) rather than the full state extent — NH is tall and
+# narrow vs. a wide map panel, so fitting the whole state spills into
+# neighbouring states. MAX_ZOOM caps how tight that auto-fit can get so a lone
+# event doesn't zoom to street level. MIN_ZOOM stops the user panning back out
+# past the NH-level view.
 NH_BOUNDS = [[42.70, -72.56], [45.31, -70.61]]
-MIN_ZOOM = 7
+MIN_ZOOM = 8
+MAX_ZOOM = 12
+FIT_PADDING = (40, 40)
 
 
 @st.cache_resource
@@ -106,9 +116,11 @@ def render_event_map(events, facs_by_event=None, *, height=500):
             zoom_start=ZOOM,
             tiles=TILES,
             min_zoom=MIN_ZOOM,
+            max_zoom=MAX_ZOOM,
             max_bounds=True,
         )
         town_idx = {}
+        points = []
         plotted = 0
         for ev in events:
             city = (ev.get("city") or "").strip()
@@ -149,12 +161,19 @@ def render_event_map(events, facs_by_event=None, *, height=500):
                 fill_opacity=0.85,
                 tooltip=folium.Tooltip(tooltip_html, sticky=True),
             ).add_to(nh_map)
+            points.append([lat, lon])
             plotted += 1
 
-        # Force the initial view to frame NH itself, regardless of container
-        # width or marker spread. Without this the map can render zoomed out to
-        # the whole Northeast US + Eastern Canada.
-        nh_map.fit_bounds(NH_BOUNDS)
+        # Primary framing: fit to the actual event markers (with padding) so
+        # the opening view fills with NH events rather than the whole state's
+        # bounding box (which spills into neighbouring states on a wide,
+        # short map panel). MAX_ZOOM on Map() caps the fit so a lone event
+        # doesn't zoom to street level. If nothing is plotable, fall back to
+        # framing the whole state so an empty map still shows NH, not the world.
+        if points:
+            nh_map.fit_bounds(points, padding=FIT_PADDING)
+        else:
+            nh_map.fit_bounds(NH_BOUNDS)
         st_folium(nh_map, width="100%", height=height, returned_objects=[])
         if plotted == 0:
             st.caption(
