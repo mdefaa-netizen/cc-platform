@@ -146,37 +146,15 @@ with c4:
 st.markdown("<br>", unsafe_allow_html=True)
 
 # ── Event Map ──────────────────────────────────────────────────────────────────
+# Rendering lives in utils.event_map so the host/facilitator portal can render
+# the same map without duplicating folium+geopy logic. The two SQL fetches that
+# feed it stay here (they use the supabase_db._fetchall helper the rest of this
+# page uses); we hand the rows to render_event_map.
 st.markdown("### 🗺️ Event Map — New Hampshire")
 
+from utils.event_map import render_event_map as _render_event_map
+
 try:
-    import folium
-    from streamlit_folium import st_folium
-    from geopy.geocoders import Nominatim
-    from geopy.exc import GeocoderServiceError, GeocoderTimedOut
-    from datetime import datetime as _dt
-
-    @st.cache_resource
-    def _nh_geocoder():
-        return Nominatim(user_agent="cc-platform-nh-map")
-
-    if "_geo_cache" not in st.session_state:
-        st.session_state._geo_cache = {}
-    _geo_cache = st.session_state._geo_cache
-
-    def _geocode_city(city_name: str):
-        if not city_name:
-            return None
-        key = city_name.strip().lower()
-        if key in _geo_cache:
-            return _geo_cache[key]
-        try:
-            loc = _nh_geocoder().geocode(f"{city_name}, NH", timeout=5)
-            coords = (loc.latitude, loc.longitude) if loc else None
-        except (GeocoderServiceError, GeocoderTimedOut, Exception):
-            coords = None
-        _geo_cache[key] = coords
-        return coords
-
     _map_rows = _fetchall(get_connection(), """
         SELECT e.event_id, e.event_name, e.event_date, e.city,
                h.name AS host_name, h.venue_name
@@ -194,59 +172,7 @@ try:
     for _fr in _fac_rows:
         _facs_by_event.setdefault(_fr["event_id"], []).append(_fr["facilitator_name"])
 
-    nh_map = folium.Map(
-        location=[43.97, -71.57],
-        zoom_start=8,
-        tiles="CartoDB positron",
-    )
-    _town_idx = {}
-    _plotted = 0
-    for _ev in _map_rows:
-        _city = (_ev["city"] or "").strip()
-        if not _city:
-            continue
-        _coords = _geocode_city(_city)
-        if not _coords:
-            continue
-        _key = _city.lower()
-        _i = _town_idx.get(_key, 0)
-        _town_idx[_key] = _i + 1
-        _lat = _coords[0] + (_i * 0.01)
-        _lon = _coords[1] + (_i * 0.01)
-
-        try:
-            _date_fmt = _dt.fromisoformat(str(_ev["event_date"])[:10]).strftime("%B %d, %Y")
-        except Exception:
-            _date_fmt = str(_ev["event_date"] or "")
-        _host_label = _ev["venue_name"] or _ev["host_name"] or "—"
-        _fac_label = ", ".join(_facs_by_event.get(_ev["event_id"], [])) or "—"
-        _tooltip_html = (
-            f"<div style='font-size:0.85rem'>"
-            f"<strong>{_esc(_date_fmt)}</strong><br>"
-            f"🏛️ {_esc(_host_label)}<br>"
-            f"🎤 {_esc(_fac_label)}"
-            f"</div>"
-        )
-
-        folium.CircleMarker(
-            location=[_lat, _lon],
-            radius=10,
-            color="#2DD4BF",
-            weight=2,
-            fill=True,
-            fill_color="#2DD4BF",
-            fill_opacity=0.85,
-            tooltip=folium.Tooltip(_tooltip_html, sticky=True),
-        ).add_to(nh_map)
-        _plotted += 1
-
-    st_folium(nh_map, width="100%", height=500, returned_objects=[])
-    if _plotted == 0:
-        st.caption("No events with locatable towns yet — add a city to an event to see it on the map.")
-    else:
-        st.caption(f"📍 {_plotted} event{'s' if _plotted != 1 else ''} mapped")
-except ImportError as _map_ie:
-    st.info(f"🗺️ Map unavailable — install dependencies: `pip install folium streamlit-folium geopy` ({_map_ie}).")
+    _render_event_map(_map_rows, _facs_by_event, height=500)
 except Exception as _map_err:
     st.warning(f"🗺️ Map could not be rendered: {_map_err}")
 

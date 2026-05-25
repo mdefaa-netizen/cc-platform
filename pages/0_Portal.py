@@ -20,6 +20,7 @@ from utils.mileage import (
     MILEAGE_RATE, FACILITATOR_STIPEND,
     calculate_round_trip_miles, estimate_reimbursement,
 )
+from utils.event_map import render_event_map
 from utils.auth import require_auth, render_sidebar_user
 from utils.styles import inject_css
 from html import escape as _esc
@@ -169,15 +170,17 @@ if notifs:
 # facilitator branch further below.
 # Extra address-entry tab: hosts edit their event's venue address; facilitators
 # edit their own home address and see a per-event travel/reimbursement estimate.
+# "Event Map" surfaces ALL events on the same NH map the coordinator/colleagues
+# see — same helper (utils.event_map.render_event_map), no duplication.
 if person_type == "host":
-    tab_cal, tab_msg, tab_fac, tab_addr, tab_feedback = st.tabs(
+    tab_cal, tab_msg, tab_fac, tab_addr, tab_feedback, tab_map = st.tabs(
         ["📅 My Events", "💬 Message Coordinator", "🤝 Contact Facilitator(s)",
-         "🏠 Event Venue Address", "📝 Submit Feedback"]
+         "🏠 Event Venue Address", "📝 Submit Feedback", "🗺️ Event Map"]
     )
 else:
-    tab_cal, tab_msg, tab_fac, tab_addr, tab_feedback = st.tabs(
+    tab_cal, tab_msg, tab_fac, tab_addr, tab_feedback, tab_map = st.tabs(
         ["📅 My Events", "💬 Message Coordinator", "📨 Messages from Hosts",
-         "🚗 My Travel & Reimbursement", "📝 Submit Feedback"]
+         "🚗 My Travel & Reimbursement", "📝 Submit Feedback", "🗺️ Event Map"]
     )
 
 # ── Calendar / My Events ───────────────────────────────────────────────────────
@@ -745,3 +748,20 @@ with tab_feedback:
                     )
                     st.success("✅ Thank you! Your feedback has been submitted.")
                     st.balloons()
+
+# ── Event Map ─────────────────────────────────────────────────────────────────
+# All-events map (not viewer-scoped). Same helper the coordinator dashboard
+# uses, so the markers, geocoding, center, zoom, and same-city nudge are
+# identical. Builds the facilitator-by-event-id dict locally so the tooltip
+# matches the dashboard's "🎤 facilitator(s)" line.
+with tab_map:
+    st.markdown("### Community Conversations across New Hampshire")
+    st.caption("All scheduled and completed events. Hover a marker for date, host/venue, and facilitator(s).")
+
+    _all_evs = get_all_events()
+    _facs_by_event = {}
+    for _ev in _all_evs:
+        for _f in get_event_facilitators(_ev["event_id"]):
+            _facs_by_event.setdefault(_ev["event_id"], []).append(_f.get("name", ""))
+
+    render_event_map(_all_evs, _facs_by_event, height=520)
