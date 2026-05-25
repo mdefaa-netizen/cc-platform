@@ -26,6 +26,12 @@ CENTER = (43.97, -71.57)
 ZOOM = 8
 TILES = "CartoDB positron"
 
+# New Hampshire state bounding box — used by fit_bounds so the initial view
+# frames NH itself (not the whole Northeast US) and by max_bounds so panning
+# stays around the state. SW corner (lat, lon) → NE corner (lat, lon).
+NH_BOUNDS = [[42.70, -72.56], [45.31, -70.61]]
+MIN_ZOOM = 7
+
 
 @st.cache_resource
 def _nh_geocoder():
@@ -99,6 +105,8 @@ def render_event_map(events, facs_by_event=None, *, height=500):
             location=list(CENTER),
             zoom_start=ZOOM,
             tiles=TILES,
+            min_zoom=MIN_ZOOM,
+            max_bounds=True,
         )
         town_idx = {}
         plotted = 0
@@ -143,6 +151,10 @@ def render_event_map(events, facs_by_event=None, *, height=500):
             ).add_to(nh_map)
             plotted += 1
 
+        # Force the initial view to frame NH itself, regardless of container
+        # width or marker spread. Without this the map can render zoomed out to
+        # the whole Northeast US + Eastern Canada.
+        nh_map.fit_bounds(NH_BOUNDS)
         st_folium(nh_map, width="100%", height=height, returned_objects=[])
         if plotted == 0:
             st.caption(
