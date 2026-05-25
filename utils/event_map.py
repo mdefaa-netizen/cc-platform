@@ -26,19 +26,19 @@ CENTER = (43.97, -71.57)
 ZOOM = 8
 TILES = "CartoDB positron"
 
-# New Hampshire state bounding box — used by fit_bounds as the FALLBACK when
-# no events have plotable locations, and by max_bounds so panning stays around
-# the state. SW corner (lat, lon) → NE corner (lat, lon).
+# New Hampshire state bounding box — used by fit_bounds as the PRIMARY framing
+# so the entire state (north and south together) is visible on open, and by
+# max_bounds so panning stays around the state. SW corner (lat, lon) → NE
+# corner (lat, lon).
 #
-# Primary framing comes from fit_bounds(points) on the actual event markers,
-# so the opening view fills with the events themselves (typically clustered in
-# central/southern NH) rather than the full state extent — NH is tall and
-# narrow vs. a wide map panel, so fitting the whole state spills into
-# neighbouring states. MAX_ZOOM caps how tight that auto-fit can get so a lone
-# event doesn't zoom to street level. MIN_ZOOM stops the user panning back out
-# past the NH-level view.
+# Earlier iterations framed on the event markers instead; events cluster in
+# central/southern NH, so the opening view excluded northern towns and the
+# previously raised MIN_ZOOM=8 floor made the whole state unreachable. Frame
+# the whole state and lower MIN_ZOOM to 6 so the full-state fit can actually
+# land (whole-state fits land around zoom 7 in this panel). MAX_ZOOM still
+# caps zoom-in.
 NH_BOUNDS = [[42.70, -72.56], [45.31, -70.61]]
-MIN_ZOOM = 8
+MIN_ZOOM = 6
 MAX_ZOOM = 12
 FIT_PADDING = (40, 40)
 
@@ -164,16 +164,11 @@ def render_event_map(events, facs_by_event=None, *, height=500):
             points.append([lat, lon])
             plotted += 1
 
-        # Primary framing: fit to the actual event markers (with padding) so
-        # the opening view fills with NH events rather than the whole state's
-        # bounding box (which spills into neighbouring states on a wide,
-        # short map panel). MAX_ZOOM on Map() caps the fit so a lone event
-        # doesn't zoom to street level. If nothing is plotable, fall back to
-        # framing the whole state so an empty map still shows NH, not the world.
-        if points:
-            nh_map.fit_bounds(points, padding=FIT_PADDING)
-        else:
-            nh_map.fit_bounds(NH_BOUNDS)
+        # Primary framing: fit the WHOLE state of NH (north + south together).
+        # Events live inside the state, so the whole-state view already
+        # includes them — fitting to event markers instead would clip out the
+        # north on the typical wide/short map panel.
+        nh_map.fit_bounds(NH_BOUNDS)
         st_folium(nh_map, width="100%", height=height, returned_objects=[])
         if plotted == 0:
             st.caption(
