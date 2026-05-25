@@ -110,8 +110,24 @@ def reset_user_password(email: str, new_password: str):
 def require_auth(allowed_roles=None):
     """Call at the top of every page. Redirects to pages/0_Login.py if not
     authenticated, or if the user's role is not in allowed_roles.
+
+    Portal-user exception: a host/facilitator who signed in via the portal
+    (pages/0_Portal.py → check_portal_login) has st.session_state['portal_user']
+    set but NOT st.session_state['authenticated'] (that flag is reserved for
+    the staff users-table login). Without the branch below, clicking any
+    staff page bounces them onto the staff Login screen — looks like a
+    sign-out even though the session is intact. Send them back to their
+    portal instead. Session is preserved (no clear), so they land where
+    they started with no re-auth required.
     """
     if not st.session_state.get("authenticated"):
+        if st.session_state.get("portal_user"):
+            try:
+                st.switch_page("pages/0_Portal.py")
+            except Exception:
+                st.warning("This page is for staff. Returning you to your portal.")
+                st.stop()
+            return None
         try:
             st.switch_page("pages/0_Login.py")
         except Exception:
