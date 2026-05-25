@@ -1,0 +1,54 @@
+-- Migration 005: must_change_password flag on portal_access
+-- Date: 2026-05-25
+-- Purpose: Add the flag that lets the portal force a user to set their own
+--          personal password the first time they sign in. New accounts are
+--          seeded with a shared initial password (the "access code") and
+--          must_change_password=1; the portal blocks them from reaching
+--          content until they set a new password via the form in
+--          pages/0_Portal.py, at which point the flag flips to 0.
+--
+-- Status: HOLD. Do NOT apply automatically. Operator runs this in the
+--          Supabase SQL Editor after reviewing the diff. Local SQLite picks
+--          the column up via init_all() → init_portal_access() (which uses
+--          ALTER TABLE ADD COLUMN IF NOT EXISTS — guarded with a PRAGMA
+--          check on SQLite for idempotency).
+--
+-- Strategy: additive, idempotent ALTER TABLE ADD COLUMN IF NOT EXISTS.
+--          Default 0 so EXISTING claimed portal accounts (e.g. accounts
+--          users have already signed into) are NOT forced to change.
+--          Any new account created via the grant flow in
+--          pages/13_Portal_Access.py passes 1 explicitly.
+
+ALTER TABLE portal_access
+    ADD COLUMN IF NOT EXISTS must_change_password INTEGER DEFAULT 0;
+
+-- ──────────────────────────────────────────────────────────────────────────────
+-- Verification queries (run manually in Supabase SQL Editor after applying;
+-- do NOT execute as part of the migration itself).
+-- ──────────────────────────────────────────────────────────────────────────────
+--
+-- 1. Confirm the column exists with the expected default:
+-- SELECT column_name, data_type, column_default
+--   FROM information_schema.columns
+--   WHERE table_schema='public' AND table_name='portal_access'
+--     AND column_name='must_change_password';
+--
+-- 2. Confirm existing rows defaulted to 0 (no one is unexpectedly forced
+--    to change):
+-- SELECT COUNT(*) FROM portal_access WHERE must_change_password=1;
+-- SELECT COUNT(*) FROM portal_access WHERE must_change_password=0
+--   OR must_change_password IS NULL;
+--
+-- ──────────────────────────────────────────────────────────────────────────────
+-- Apply steps (operator runs these — do NOT run from the app sandbox):
+-- ──────────────────────────────────────────────────────────────────────────────
+-- 1. Snapshot Supabase: Project → Database → Backups → "Take backup now"
+--    (skip on free tier — this migration is additive).
+-- 2. Open Supabase SQL Editor against the production project.
+-- 3. Paste the contents of THIS file (everything above the verification block)
+--    and run it. It is idempotent; re-running is safe.
+-- 4. Run verification queries (1) and (2) above.
+-- 5. In the app: create a new test portal account via the Portal Access page —
+--    it should be seeded with the shared initial password (from
+--    st.secrets["PORTAL_INITIAL_PASSWORD"]) and arrive at the portal forced
+--    to change it on first sign-in.

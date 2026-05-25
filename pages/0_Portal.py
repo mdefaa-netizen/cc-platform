@@ -15,6 +15,7 @@ from utils.database import (
     get_facilitator, update_facilitator,
     get_event, update_event,
     hide_message,
+    update_portal_password,
 )
 from utils.mileage import (
     MILEAGE_RATE, FACILITATOR_STIPEND,
@@ -118,6 +119,47 @@ if not st.session_state.get("portal_user"):
 puser = st.session_state.get("portal_user")
 if not puser:
     st.stop()
+
+# ── First-login intercept: force a password change before any content ─────────
+# Triggers whenever portal_user.must_change_password is truthy — set on accounts
+# seeded with the shared initial password in pages/13_Portal_Access.py. Also
+# catches users who logged in successfully but bailed before resetting (the
+# flag is still 1, so they're brought back here on their next visit). The
+# update_portal_password helper flips the flag to 0; we mirror that in the
+# session dict so the rerun falls through without another DB round-trip.
+if puser.get("must_change_password"):
+    st.markdown("""
+    <div style='max-width:480px;margin:3rem auto 1rem;background:white;
+    padding:2rem 2rem;border-radius:14px;box-shadow:0 8px 32px rgba(0,0,0,0.1)'>
+    <div style='text-align:center;margin-bottom:1.2rem'>
+        <div style='font-size:2.2rem'>🔑</div>
+        <h3 style='font-family:Playfair Display,serif;color:#1B2A4A;margin:0.4rem 0 0.2rem'>
+            Set Your Password</h3>
+        <p style='color:#7F8C8D;font-size:0.88rem;margin:0'>
+            Choose a personal password before continuing.</p>
+    </div>
+    """, unsafe_allow_html=True)
+    with st.form("portal_set_password_form"):
+        new_pw     = st.text_input("New password", type="password",
+                                    placeholder="At least 8 characters")
+        confirm_pw = st.text_input("Confirm new password", type="password",
+                                    placeholder="Type it again")
+        if st.form_submit_button("Save password", use_container_width=True):
+            if not new_pw or not confirm_pw:
+                st.error("Both fields are required.")
+            elif new_pw != confirm_pw:
+                st.error("The two passwords don't match.")
+            elif len(new_pw) < 8:
+                st.error("Password must be at least 8 characters.")
+            else:
+                update_portal_password(puser["access_id"], new_pw)
+                puser["must_change_password"] = 0
+                st.session_state.portal_user = puser
+                st.success("✅ Password set. Continuing to your portal…")
+                st.rerun()
+    st.markdown("</div>", unsafe_allow_html=True)
+    st.stop()
+
 person_type = puser.get("person_type","")
 person_id   = puser.get("person_id")
 person_name = puser.get("person_name","")

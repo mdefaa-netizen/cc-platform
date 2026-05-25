@@ -915,9 +915,26 @@ def init_portal_access():
             granted_by  TEXT DEFAULT 'Coordinator',
             granted_at  TIMESTAMP,
             notes       TEXT,
-            created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            -- 1 = account was seeded with the shared initial password and the
+            -- user must set their own personal password before reaching portal
+            -- content. Default 0 so existing claimed accounts created before
+            -- this feature are NOT forced to change. New rows inserted via the
+            -- grant flow pass 1 explicitly.
+            must_change_password INTEGER DEFAULT 0
         )
     """)
+    # Backfill for pre-existing local DBs whose portal_access table was created
+    # before this column existed. ALTER TABLE ADD COLUMN is idempotent only via
+    # the column-exists check; otherwise it raises OperationalError on re-run.
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(portal_access)").fetchall()]
+    if "must_change_password" not in cols:
+        try:
+            conn.execute(
+                "ALTER TABLE portal_access ADD COLUMN must_change_password INTEGER DEFAULT 0"
+            )
+        except sqlite3.OperationalError:
+            pass
     conn.commit(); conn.close()
 
 def get_all_portal_access():
@@ -928,13 +945,36 @@ def get_all_portal_access():
     return [dict(r) for r in rows]
 
 def add_portal_access(data):
+    """Insert a new portal account. must_change_password defaults to 0 for
+    back-compat with callers that don't pass it; the grant flow in
+    pages/13_Portal_Access.py passes 1 explicitly so seeded shared-code
+    accounts are forced to set their own password on first sign-in."""
     init_portal_access()
     with _safe_conn() as conn:
         conn.execute("""
-            INSERT INTO portal_access (person_type,person_id,username,password_hash,is_active,notes)
-            VALUES (?,?,?,?,?,?)
+            INSERT INTO portal_access
+                (person_type, person_id, username, password_hash,
+                 is_active, notes, must_change_password)
+            VALUES (?,?,?,?,?,?,?)
         """, (data['person_type'], data['person_id'], data['username'],
-              hash_password(data['password']), data.get('is_active', 0), data.get('notes','')))
+              hash_password(data['password']), data.get('is_active', 0),
+              data.get('notes', ''),
+              1 if data.get('must_change_password') else 0))
+        conn.commit()
+
+
+def update_portal_password(access_id, new_password):
+    """Replace the stored password hash for a portal account and clear the
+    must_change_password flag. Uses the existing PBKDF2 hash_password helper —
+    do NOT reimplement hashing here. Called from the first-login set-password
+    form in pages/0_Portal.py."""
+    init_portal_access()
+    with _safe_conn() as conn:
+        conn.execute("""
+            UPDATE portal_access
+            SET password_hash = ?, must_change_password = 0
+            WHERE access_id = ?
+        """, (hash_password(new_password), int(access_id)))
         conn.commit()
 
 def update_portal_access(access_id, is_active):

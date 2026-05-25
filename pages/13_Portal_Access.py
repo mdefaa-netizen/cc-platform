@@ -1,5 +1,5 @@
 import streamlit as st
-import sys, os, secrets, string
+import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from utils.database import (
@@ -10,6 +10,25 @@ from utils.database import (
 )
 from utils.auth import require_auth, render_sidebar_user
 from utils.styles import inject_css, page_header
+
+# Shared initial password (the "access code") — same for every newly created
+# portal account. Pulled from st.secrets if configured; otherwise falls back
+# to a documented default and surfaces a caption telling the coordinator to
+# set the secret. New accounts are forced to change this on first sign-in
+# (see pages/0_Portal.py — must_change_password gate).
+DEFAULT_PORTAL_INITIAL_PASSWORD = "ChangeMe2026!"
+
+
+def _shared_initial_password():
+    try:
+        val = st.secrets.get("PORTAL_INITIAL_PASSWORD", "")
+    except Exception:
+        val = ""
+    return val or DEFAULT_PORTAL_INITIAL_PASSWORD
+
+
+def _initial_password_is_default() -> bool:
+    return _shared_initial_password() == DEFAULT_PORTAL_INITIAL_PASSWORD
 
 st.set_page_config(page_title="Portal Access · CC Platform", page_icon="🔑", layout="wide")
 inject_css()
@@ -50,6 +69,10 @@ with tab_manage:
         for a in access_list:
             status_icon = "🟢 Active" if a.get("is_active") else "🔴 Pending"
             ptype_icon  = "👥" if a.get("person_type") == "host" else "🎤"
+            # 🔓 badge: account still holds the shared initial password — the
+            # user has not yet signed in and chosen their own. Lets the
+            # coordinator see at a glance who's claimed their account.
+            claim_icon = " 🔓 not yet claimed" if a.get("must_change_password") else ""
 
             # Get person name
             if a.get("person_type") == "host":
@@ -57,7 +80,7 @@ with tab_manage:
             else:
                 person = next((f for f in facs if f["facilitator_id"]==a.get("person_id")), {})
 
-            with st.expander(f"{ptype_icon} {person.get('name','Unknown')} — @{a.get('username','')} — {status_icon}"):
+            with st.expander(f"{ptype_icon} {person.get('name','Unknown')} — @{a.get('username','')} — {status_icon}{claim_icon}"):
                 c1, c2, c3 = st.columns(3)
                 with c1:
                     st.markdown(f"**Type:** {a.get('person_type','').title()}")
@@ -102,9 +125,22 @@ with tab_manage:
 with tab_grant:
     st.markdown("### Grant Portal Access")
 
-    def gen_password(length=16):
-        chars = string.ascii_letters + string.digits + "!@#$%"
-        return ''.join(secrets.choice(chars) for _ in range(length))
+    _shared_pw = _shared_initial_password()
+    st.caption(
+        "Every new portal account is created with the same **shared access "
+        "code** below. The user will be required to set their own password "
+        "the first time they sign in."
+    )
+    if _initial_password_is_default():
+        st.warning(
+            "Using the default fallback access code "
+            "(`PORTAL_INITIAL_PASSWORD` is not set in Streamlit secrets). "
+            "Set it in **Settings → Secrets** on Streamlit Cloud to rotate "
+            "the shared code. Rotating affects only NEW accounts; accounts "
+            "already issued keep their seeded code."
+        )
+
+    st.code(f"Shared access code: {_shared_pw}")
 
     with st.form("grant_access_form"):
         c1, c2 = st.columns(2)
@@ -121,16 +157,13 @@ with tab_grant:
             username   = st.text_input("Username *",
                                         placeholder="e.g., jsmith_host",
                                         help="They will use this to sign in")
-            auto_pw    = gen_password()
-            password   = st.text_input("Password *", value=auto_pw,
-                                        help="Auto-generated — you can change it")
             activate   = st.checkbox("Approve immediately", value=True,
                                       help="Check to grant access right away (default), or uncheck to create a pending account you'll approve later under 'Manage Access'")
         notes = st.text_input("Notes", placeholder="e.g., Concord event confirmed")
 
         if st.form_submit_button("🔑 Create Portal Access", use_container_width=True):
-            if not person_sel or not username or not password:
-                st.error("Person, username, and password are required.")
+            if not person_sel or not username:
+                st.error("Person and username are required.")
             else:
                 # Check username not already taken
                 existing = [a for a in get_all_portal_access() if a.get("username")==username]
@@ -141,20 +174,28 @@ with tab_grant:
                         "person_type": person_type,
                         "person_id":   person_sel,
                         "username":    username,
-                        "password":    password,
+                        # Seed with the shared access code; the user is forced
+                        # to change it on first sign-in (must_change_password=1
+                        # below, intercept in pages/0_Portal.py).
+                        "password":    _shared_pw,
                         "is_active":   1 if activate else 0,
                         "notes":       notes,
+                        "must_change_password": 1,
                     })
                     pname = opts.get(person_sel, "")
                     log_activity("Portal Access Created",
                                  f"{pname} (@{username}) — {'Active' if activate else 'Pending'}")
                     if activate:
                         st.success(f"Portal access created and approved for **{pname}**!")
-                        st.warning(f"Share these credentials with {pname} (shown once only):")
-                        st.code(f"Username: {username}\nPassword: {password}")
+                        st.warning(f"Share these credentials with {pname}:")
+                        st.code(
+                            f"Username: {username}\n"
+                            f"Access code (one-time): {_shared_pw}"
+                        )
                         st.info(
                             f"Tell {pname} to sign in on the **My Portal** page with their "
-                            f"**Username** (not on the main **Email** sign-in)."
+                            f"**Username**. They'll be asked to set their own password the "
+                            f"first time they sign in."
                         )
                     else:
                         st.success(f"Portal access created for **{pname}** (pending approval).")
@@ -163,4 +204,8 @@ with tab_grant:
                             f"approve {pname} under the **Manage Access** tab. "
                             f"Share them only after approval."
                         )
-                        st.code(f"Username: {username}\nPassword: {password}\n# Status: PENDING APPROVAL — login will fail until approved")
+                        st.code(
+                            f"Username: {username}\n"
+                            f"Access code (one-time): {_shared_pw}\n"
+                            f"# Status: PENDING APPROVAL — login will fail until approved"
+                        )

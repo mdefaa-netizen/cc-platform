@@ -355,7 +355,11 @@ def init_all():
                 person_id INTEGER NOT NULL, username TEXT UNIQUE NOT NULL,
                 password_hash TEXT NOT NULL, is_active INTEGER DEFAULT 0,
                 granted_by TEXT DEFAULT 'Coordinator', granted_at TIMESTAMP,
-                notes TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
+                notes TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                must_change_password INTEGER DEFAULT 0)""")
+            # Add must_change_password if a pre-feature table is already in place.
+            cur.execute("""ALTER TABLE portal_access
+                ADD COLUMN IF NOT EXISTS must_change_password INTEGER DEFAULT 0""")
             # activity_log
             cur.execute("""CREATE TABLE IF NOT EXISTS activity_log (
                 log_id SERIAL PRIMARY KEY, action TEXT NOT NULL, details TEXT,
@@ -735,9 +739,12 @@ def init_portal_access():
                     granted_by  TEXT DEFAULT 'Coordinator',
                     granted_at  TIMESTAMP,
                     notes       TEXT,
-                    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    must_change_password INTEGER DEFAULT 0
                 )
             """)
+            cur.execute("""ALTER TABLE portal_access
+                ADD COLUMN IF NOT EXISTS must_change_password INTEGER DEFAULT 0""")
         conn.commit()
     finally:
         _putconn(conn)
@@ -1409,13 +1416,31 @@ def get_all_portal_access():
 
 
 def add_portal_access(data):
+    """Mirrors utils.database.add_portal_access. Pass must_change_password=1
+    when seeding accounts with the shared initial password; default 0."""
     init_portal_access()
     conn = get_connection()
     _execute(conn, """
-        INSERT INTO portal_access (person_type,person_id,username,password_hash,is_active,notes)
-        VALUES (%s,%s,%s,%s,%s,%s)
+        INSERT INTO portal_access
+            (person_type, person_id, username, password_hash,
+             is_active, notes, must_change_password)
+        VALUES (%s,%s,%s,%s,%s,%s,%s)
     """, (data['person_type'], data['person_id'], data['username'],
-          hash_password(data['password']), data.get('is_active', 0), data.get('notes', '')))
+          hash_password(data['password']), data.get('is_active', 0),
+          data.get('notes', ''),
+          1 if data.get('must_change_password') else 0))
+    return True
+
+
+def update_portal_password(access_id, new_password):
+    """Postgres parity for utils.database.update_portal_password."""
+    init_portal_access()
+    conn = get_connection()
+    _execute(conn, """
+        UPDATE portal_access
+        SET password_hash = %s, must_change_password = 0
+        WHERE access_id = %s
+    """, (hash_password(new_password), int(access_id)))
     return True
 
 
