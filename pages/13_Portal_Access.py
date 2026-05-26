@@ -155,7 +155,7 @@ with tab_grant:
                                        format_func=lambda x: "— Select —" if x=="" else opts[x])
         with c2:
             username   = st.text_input("Username *",
-                                        placeholder="e.g., jsmith_host",
+                                        placeholder="e.g., tsmith",
                                         help="They will use this to sign in")
             activate   = st.checkbox("Approve immediately", value=True,
                                       help="Check to grant access right away (default), or uncheck to create a pending account you'll approve later under 'Manage Access'")
