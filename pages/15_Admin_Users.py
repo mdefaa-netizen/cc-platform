@@ -39,6 +39,12 @@ with tabs[0]:
         rows = [header, divider]
         for u in users:
             status = "🟢 Active" if u.get("is_active") else "🔴 Inactive"
+            # 🔓 badge: account still holds the temp password issued at create
+            # time — the user has not yet completed the first-login set-password
+            # intercept in require_auth. Lets the coordinator see at a glance
+            # who's claimed their account.
+            if u.get("must_change_password"):
+                status = f"{status} · 🔓 not yet claimed"
             created = str(u.get("created_at", ""))[:10]
             rows.append(
                 f"| {u['email']} | {u.get('full_name') or '—'} | "
@@ -150,6 +156,10 @@ with tabs[1]:
                             password=pwd,
                             role=new_role,
                             full_name=new_full_name,
+                            # New: force the user to set their own password on
+                            # first sign-in. The require_auth intercept enforces
+                            # this on every staff page they land on.
+                            must_change_password=True,
                         )
                         log_activity(
                             "User Created",
@@ -158,7 +168,8 @@ with tabs[1]:
                         st.success(f"✅ User {new_email} created.")
                         st.info(
                             f"**Temporary password:** `{pwd}`\n\n"
-                            f"Share this with the user securely. They should change it on first login."
+                            f"Share this with the user securely. They will be required to set "
+                            f"their own password the first time they sign in."
                         )
                     except Exception as e:
                         st.error(f"Failed to create user: {e}")

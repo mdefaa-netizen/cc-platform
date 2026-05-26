@@ -1,0 +1,51 @@
+-- Migration 006: must_change_password flag on users (staff)
+-- Date: 2026-05-26
+-- Purpose: Mirror the portal_access.must_change_password flag (migration 005)
+--          for the staff users table. Lets the Admin Users grant flow seed a
+--          new staff account that is forced to set their own password on
+--          first sign-in. The intercept lives in utils.auth.require_auth so
+--          it fires on every staff page (defense in depth — staff can't
+--          bypass by navigating to a different sidebar entry).
+--
+-- Status: HOLD. Do NOT apply automatically. Operator runs this in the
+--          Supabase SQL Editor after reviewing the diff. Local SQLite picks
+--          the column up via init_users() — its ALTER TABLE ADD COLUMN
+--          (guarded by a PRAGMA-column check) is the SQLite equivalent.
+--
+-- Strategy: additive, idempotent ALTER TABLE ADD COLUMN IF NOT EXISTS.
+--          Default 0 so EXISTING staff rows — including the bootstrap
+--          coordinator (mdefaa@gmail.com) and any nhh_staff / cdfa_staff
+--          already created — are NOT forced to change. Only new rows
+--          inserted by the Admin Users create form (which passes
+--          must_change_password=1 explicitly) carry the flag.
+
+ALTER TABLE users
+    ADD COLUMN IF NOT EXISTS must_change_password INTEGER NOT NULL DEFAULT 0;
+
+-- ──────────────────────────────────────────────────────────────────────────────
+-- Verification queries (run manually in Supabase SQL Editor after applying;
+-- do NOT execute as part of the migration itself).
+-- ──────────────────────────────────────────────────────────────────────────────
+--
+-- 1. Confirm the column exists with the expected default:
+-- SELECT column_name, data_type, column_default, is_nullable
+--   FROM information_schema.columns
+--   WHERE table_schema='public' AND table_name='users'
+--     AND column_name='must_change_password';
+--
+-- 2. Confirm no existing rows are unexpectedly flagged:
+-- SELECT COUNT(*) FROM users WHERE must_change_password=1;
+-- (Expected: 0 immediately after applying this migration.)
+--
+-- ──────────────────────────────────────────────────────────────────────────────
+-- Apply steps (operator runs these — do NOT run from the app sandbox):
+-- ──────────────────────────────────────────────────────────────────────────────
+-- 1. Snapshot Supabase (skip on free tier; this migration is additive).
+-- 2. Open Supabase SQL Editor against the production project.
+-- 3. Paste the contents of THIS file (everything above the verification block)
+--    and run it. It is idempotent; re-running is safe.
+-- 4. Run verification queries (1) and (2) above.
+-- 5. In the app: open Admin Users → Create User and add a test staff account.
+--    Sign out, sign in as the test account with the temp password shown by
+--    the form. You should be intercepted by a "Set Your Password" card
+--    before any page content renders.

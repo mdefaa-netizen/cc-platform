@@ -216,7 +216,12 @@ def init_users():
                 )),
                 full_name TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                is_active INTEGER NOT NULL DEFAULT 1
+                is_active INTEGER NOT NULL DEFAULT 1,
+                -- 1 = newly-created staff account, must set their own password
+                -- on first sign-in. Default 0 so bootstrap + existing staff
+                -- are not unexpectedly forced. Admin Users create flow passes
+                -- 1 explicitly; the require_auth intercept reads it.
+                must_change_password INTEGER NOT NULL DEFAULT 0
             );
             CREATE INDEX IF NOT EXISTS idx_users_email ON users (email);
             CREATE INDEX IF NOT EXISTS idx_users_role  ON users (role);
@@ -242,6 +247,14 @@ def init_users():
             try:
                 conn.execute(
                     "ALTER TABLE users ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1"
+                )
+            except sqlite3.OperationalError:
+                pass
+
+        if "must_change_password" not in cols:
+            try:
+                conn.execute(
+                    "ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0"
                 )
             except sqlite3.OperationalError:
                 pass
@@ -279,11 +292,18 @@ def get_user_by_email(email):
         return dict(row) if row else None
 
 
-def create_user(email, password_hash, role, full_name=""):
+def create_user(email, password_hash, role, full_name="", must_change_password=0):
+    """Insert a new staff user. must_change_password defaults to 0 for
+    back-compat with the bootstrap path; the Admin Users grant flow in
+    pages/15_Admin_Users.py passes 1 explicitly so newly-created staff are
+    forced to set their own password on first sign-in (the intercept lives
+    in utils.auth.require_auth)."""
     with _safe_conn() as conn:
         cur = conn.execute(
-            "INSERT INTO users (email, password_hash, role, full_name) VALUES (?,?,?,?)",
-            (email, password_hash, role, full_name),
+            "INSERT INTO users (email, password_hash, role, full_name, "
+            "must_change_password) VALUES (?,?,?,?,?)",
+            (email, password_hash, role, full_name,
+             1 if must_change_password else 0),
         )
         conn.commit()
         return cur.lastrowid
@@ -292,10 +312,27 @@ def create_user(email, password_hash, role, full_name=""):
 def list_users():
     with _safe_conn() as conn:
         rows = conn.execute(
-            "SELECT id, email, role, full_name, created_at, is_active "
+            "SELECT id, email, role, full_name, created_at, is_active, "
+            "must_change_password "
             "FROM users ORDER BY created_at DESC"
         ).fetchall()
         return [dict(r) for r in rows]
+
+
+def update_staff_password_and_clear_flag(user_id, password_hash):
+    """Replace the bcrypt hash on a staff user row and clear the
+    must_change_password flag in one UPDATE. Caller hashes via
+    utils.auth.hash_password (bcrypt) before passing in — do NOT call the
+    PBKDF2 portal_access hash_password here. (Genuinely new helper; the
+    existing reset_user_password is keyed by email and is intentionally
+    not overloaded with the flag-clear because it's reachable from the
+    standalone reset_password.py CLI.)"""
+    with _safe_conn() as conn:
+        conn.execute(
+            "UPDATE users SET password_hash=?, must_change_password=0 WHERE id=?",
+            (password_hash, user_id),
+        )
+        conn.commit()
 
 
 def update_user_role(user_id, role):

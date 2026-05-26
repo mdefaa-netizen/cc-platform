@@ -76,7 +76,15 @@ def get_user_by_email(email: str):
     return _backend().get_user_by_email(email.strip().lower())
 
 
-def create_user(email: str, password: str, role: str, full_name: str = ""):
+def create_user(email: str, password: str, role: str, full_name: str = "",
+                must_change_password: bool = False):
+    """Hash the cleartext via bcrypt and dispatch to the active backend.
+
+    must_change_password=False is the default so the bootstrap path
+    (ensure_bootstrap_coordinator) and any other legacy caller keep their
+    pre-feature behaviour. The Admin Users create form (pages/15_Admin_Users.py)
+    passes True so the new staff member is forced to set their own password
+    on first sign-in via the require_auth intercept."""
     if role not in VALID_ROLES:
         raise ValueError(f"Invalid role: {role}")
     return _backend().create_user(
@@ -84,6 +92,17 @@ def create_user(email: str, password: str, role: str, full_name: str = ""):
         password_hash=hash_password(password),
         role=role,
         full_name=full_name,
+        must_change_password=1 if must_change_password else 0,
+    )
+
+
+def update_staff_password_and_clear_flag(user_id, new_password: str):
+    """Set a new bcrypt hash on a staff user row and clear
+    must_change_password in one UPDATE. Reuses hash_password (bcrypt) — do
+    NOT call the PBKDF2 portal_access helper. Called from the require_auth
+    set-password intercept."""
+    return _backend().update_staff_password_and_clear_flag(
+        user_id, hash_password(new_password)
     )
 
 
@@ -148,7 +167,63 @@ def require_auth(allowed_roles=None):
     if allowed_roles and role not in allowed_roles:
         st.error(f"Access denied. Your role ({ROLE_LABELS.get(role, role)}) cannot view this page.")
         st.stop()
+
+    # First-login intercept (staff). Mirror of the portal's set-password
+    # form at pages/0_Portal.py:120-159, but here it lives inside the auth
+    # guard so it fires on EVERY staff page — a user can't bypass by
+    # navigating to another sidebar entry. The flag is loaded into session
+    # by pages/0_Login.py on successful credential check, and the flag-clear
+    # below updates BOTH the DB (via update_staff_password_and_clear_flag)
+    # and the in-session mirror so the rerun falls through without another
+    # round-trip. Portal users never reach this point (the portal_user
+    # redirect branch earlier in this function returns first), so the staff
+    # and portal intercepts stay strictly separated.
+    if st.session_state.get("user_must_change_password"):
+        _render_staff_set_password()
+        st.stop()
+
     return role
+
+
+def _render_staff_set_password():
+    """Inline 'Set Your Password' card for staff users whose
+    must_change_password flag is set. Form-side validation matches the
+    portal form: both non-empty, must match, min 8 chars."""
+    st.markdown(
+        """
+        <div style='max-width:480px;margin:3rem auto 1rem;background:white;
+        padding:2rem 2rem;border-radius:14px;box-shadow:0 8px 32px rgba(0,0,0,0.1)'>
+        <div style='text-align:center;margin-bottom:1.2rem'>
+            <div style='font-size:2.2rem'>🔑</div>
+            <h3 style='font-family:Playfair Display,serif;color:#1B2A4A;margin:0.4rem 0 0.2rem'>
+                Set Your Password</h3>
+            <p style='color:#7F8C8D;font-size:0.88rem;margin:0'>
+                Choose a personal password before continuing.</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    with st.form("staff_set_password_form"):
+        new_pw = st.text_input("New password", type="password",
+                                placeholder="At least 8 characters")
+        confirm_pw = st.text_input("Confirm new password", type="password",
+                                    placeholder="Type it again")
+        if st.form_submit_button("Save password", use_container_width=True):
+            uid = st.session_state.get("user_id")
+            if not uid:
+                st.error("Session expired. Please sign in again.")
+            elif not new_pw or not confirm_pw:
+                st.error("Both fields are required.")
+            elif new_pw != confirm_pw:
+                st.error("The two passwords don't match.")
+            elif len(new_pw) < 8:
+                st.error("Password must be at least 8 characters.")
+            else:
+                update_staff_password_and_clear_flag(uid, new_pw)
+                st.session_state["user_must_change_password"] = 0
+                st.success("✅ Password set. Continuing…")
+                st.rerun()
+    st.markdown("</div>", unsafe_allow_html=True)
 
 
 def render_sidebar_user():

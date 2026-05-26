@@ -104,6 +104,12 @@ if submitted and not locked_out:
             st.session_state.user_full_name = user.get("full_name") or user["email"]
             st.session_state._login_at = time.time()
             st.session_state._login_attempts = 0
+            # Surface the must_change_password flag into session so the
+            # intercept inside require_auth (fires on EVERY staff page) can
+            # short-circuit to a set-password form before content renders.
+            st.session_state.user_must_change_password = bool(
+                user.get("must_change_password")
+            )
             st.switch_page("app.py")
         else:
             st.session_state._login_attempts = (

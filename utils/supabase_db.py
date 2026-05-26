@@ -396,7 +396,11 @@ def init_all():
                 )),
                 full_name TEXT,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                is_active BOOLEAN NOT NULL DEFAULT TRUE)""")
+                is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                must_change_password INTEGER NOT NULL DEFAULT 0)""")
+            # Idempotent backfill in case the table already exists without the column.
+            cur.execute("""ALTER TABLE users
+                ADD COLUMN IF NOT EXISTS must_change_password INTEGER NOT NULL DEFAULT 0""")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_users_email ON users (email)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_users_role  ON users (role)")
             # Wire up the FK from events.owner_user_id now that users exists.
@@ -476,14 +480,18 @@ def get_user_by_email(email):
     return (_fetchall(conn, "SELECT * FROM users WHERE email=%s", (email,)) or [None])[0]
 
 
-def create_user(email, password_hash, role, full_name=""):
+def create_user(email, password_hash, role, full_name="", must_change_password=0):
+    """Postgres parity for utils.database.create_user — accepts the optional
+    must_change_password flag (default 0 keeps bootstrap behaviour intact)."""
     conn = get_connection()
     try:
         with conn.cursor() as cur:
             cur.execute(
-                "INSERT INTO users (email, password_hash, role, full_name) "
-                "VALUES (%s, %s, %s, %s) RETURNING id",
-                (email, password_hash, role, full_name),
+                "INSERT INTO users (email, password_hash, role, full_name, "
+                "must_change_password) "
+                "VALUES (%s, %s, %s, %s, %s) RETURNING id",
+                (email, password_hash, role, full_name,
+                 1 if must_change_password else 0),
             )
             new_id = cur.fetchone()[0]
         conn.commit()
@@ -498,9 +506,25 @@ def list_users():
     conn = get_connection()
     return _fetchall(
         conn,
-        "SELECT id, email, role, full_name, created_at, is_active "
+        "SELECT id, email, role, full_name, created_at, is_active, "
+        "must_change_password "
         "FROM users ORDER BY created_at DESC",
     )
+
+
+def update_staff_password_and_clear_flag(user_id, password_hash):
+    """Postgres parity for utils.database.update_staff_password_and_clear_flag."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE users SET password_hash=%s, must_change_password=0 WHERE id=%s",
+                (password_hash, user_id),
+            )
+        conn.commit()
+    finally:
+        _putconn(conn)
+    return True
 
 
 def update_user_role(user_id, role):
