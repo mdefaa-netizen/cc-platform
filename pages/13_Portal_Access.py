@@ -142,17 +142,47 @@ with tab_grant:
 
     st.code(f"Shared access code: {_shared_pw}")
 
+    # Person Type and Select Person live OUTSIDE the form so that changing
+    # Person Type immediately re-runs the page and refreshes the dependent
+    # dropdown. If these widgets were inside the st.form() below, Streamlit
+    # would defer all widget updates until form submission, leaving the
+    # Select Person list stuck on whatever person_type was at first render
+    # (causing the "facilitator dropdown still shows hosts" bug).
+    c1_out, c2_out = st.columns(2)
+    with c1_out:
+        person_type = st.selectbox("Person Type", ["host", "facilitator"],
+                                    key="grant_person_type")
+        if person_type == "host":
+            # Host rows store the organization/venue in `name` and the
+            # human contact in `contact_person`. Show both so the
+            # coordinator can pick the right venue when assigning a
+            # username to a contact person.
+            def _host_label(h):
+                cp = (h.get("contact_person") or "").strip()
+                org = h.get("name") or ""
+                return f"{org} — {cp}" if cp else org
+            opts = {h["host_id"]: _host_label(h) for h in hosts}
+        else:
+            opts = {f["facilitator_id"]: f["name"] for f in facs}
+        person_sel = st.selectbox(
+            "Select Person *",
+            options=[""] + list(opts.keys()),
+            format_func=lambda x: "— Select —" if x == "" else opts[x],
+            key="grant_person_sel",
+        )
+
     with st.form("grant_access_form"):
         c1, c2 = st.columns(2)
         with c1:
-            person_type = st.selectbox("Person Type", ["host", "facilitator"])
-            if person_type == "host":
-                opts = {h["host_id"]: h["name"] for h in hosts}
+            # Echo the currently selected person inside the form so the
+            # coordinator can see what will be submitted alongside the
+            # username field. Read-only display; the actual selection
+            # state lives in the widgets above.
+            if person_sel:
+                st.caption(f"Granting access to: **{opts.get(person_sel, '')}** "
+                           f"({person_type})")
             else:
-                opts = {f["facilitator_id"]: f["name"] for f in facs}
-            person_sel = st.selectbox("Select Person *",
-                                       options=[""] + list(opts.keys()),
-                                       format_func=lambda x: "— Select —" if x=="" else opts[x])
+                st.caption("— Select a person above before submitting —")
         with c2:
             username   = st.text_input("Username *",
                                         placeholder="e.g., tsmith",
