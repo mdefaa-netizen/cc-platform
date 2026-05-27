@@ -239,3 +239,134 @@ with tab_grant:
                             f"Access code (one-time): {_shared_pw}\n"
                             f"# Status: PENDING APPROVAL — login will fail until approved"
                         )
+
+    # ── Bulk Grant ────────────────────────────────────────────────────────────
+    # Onboard a whole cohort in one click. Each line of the textarea is parsed
+    # as `type,full_name,username`. Matching is case- and whitespace-tolerant.
+    # For hosts, the full_name field is checked against BOTH the venue name
+    # (`hosts.name`) AND the contact person (`hosts.contact_person`), so the
+    # coordinator can paste either form. Each row is created with the shared
+    # access code and must_change_password=1 — identical to the manual flow.
+    # Duplicate usernames are skipped, not errored, so re-running with extra
+    # lines added is safe.
+    st.markdown("---")
+    with st.expander("📦 Bulk Grant — create many accounts at once", expanded=False):
+        st.caption(
+            "Paste one row per line in the format "
+            "**`type | full_name | username`** (fields separated by the pipe "
+            "character `|`). Use `host` or `facilitator` for type. The pipe is "
+            "used instead of comma because some stored names contain commas "
+            "(e.g., `Marshall, Courtney`). For hosts you can write either the "
+            "venue name (e.g., `Bradford`) or the contact person (e.g., "
+            "`Devin Pendleton`). All new rows are created with the shared "
+            "access code shown above, approved immediately, and require the "
+            "user to set their own password on first sign-in. Existing "
+            "usernames are skipped, not overwritten."
+        )
+
+        bulk_text = st.text_area(
+            "Bulk roster",
+            value="",
+            placeholder=(
+                "facilitator | Alice B Fogel | afogel\n"
+                "facilitator | Marshall, Courtney | cmarshall\n"
+                "host | Anne Deely | adeely\n"
+                "host | Devin Pendleton | dpendleton"
+            ),
+            height=220,
+            key="bulk_roster_text",
+        )
+
+        if st.button("🚀 Create all rows", use_container_width=True,
+                     key="bulk_grant_submit"):
+            # Build lookup tables once. Match keys are lowercase + stripped so
+            # "alice b fogel" matches "Alice B Fogel" without manual cleanup.
+            def _norm(s: str) -> str:
+                return (s or "").strip().lower()
+
+            existing_usernames = {
+                _norm(a.get("username", "")): a.get("username", "")
+                for a in get_all_portal_access()
+            }
+            facs_by_name = {_norm(f.get("name", "")): f for f in facs}
+            hosts_by_name = {_norm(h.get("name", "")): h for h in hosts}
+            hosts_by_contact = {
+                _norm(h.get("contact_person", "")): h
+                for h in hosts
+                if _norm(h.get("contact_person", ""))
+            }
+
+            results = []  # list of (status, original_line, message)
+            lines = [ln for ln in bulk_text.splitlines() if ln.strip()]
+            if not lines:
+                st.warning("Paste at least one row before clicking Create.")
+                st.stop()
+
+            for ln in lines:
+                parts = [p.strip() for p in ln.split("|")]
+                if len(parts) != 3:
+                    results.append(("error", ln,
+                                    "needs exactly 3 pipe-separated fields"))
+                    continue
+                ptype_raw, pname_raw, puser_raw = parts
+                ptype = ptype_raw.lower()
+                puser = puser_raw  # keep username as typed (case-sensitive)
+                pname_key = _norm(pname_raw)
+
+                if ptype not in ("host", "facilitator"):
+                    results.append(("error", ln,
+                                    f"unknown type '{ptype_raw}' — must be host or facilitator"))
+                    continue
+                if not puser:
+                    results.append(("error", ln, "username is empty"))
+                    continue
+                if _norm(puser) in existing_usernames:
+                    results.append(("skip", ln,
+                                    f"username '{puser}' already exists"))
+                    continue
+
+                if ptype == "facilitator":
+                    target = facs_by_name.get(pname_key)
+                    if not target:
+                        results.append(("error", ln,
+                                        f"no facilitator named '{pname_raw}'"))
+                        continue
+                    pid = target["facilitator_id"]
+                else:
+                    target = (hosts_by_name.get(pname_key)
+                              or hosts_by_contact.get(pname_key))
+                    if not target:
+                        results.append(("error", ln,
+                                        f"no host venue or contact_person matches '{pname_raw}'"))
+                        continue
+                    pid = target["host_id"]
+
+                add_portal_access({
+                    "person_type": ptype,
+                    "person_id":   pid,
+                    "username":    puser,
+                    "password":    _shared_pw,
+                    "is_active":   1,
+                    "notes":       "Bulk created",
+                    "must_change_password": 1,
+                })
+                existing_usernames[_norm(puser)] = puser
+                log_activity("Portal Access Created (bulk)",
+                             f"{pname_raw} (@{puser}) — Active")
+                results.append(("ok", ln, "created and approved"))
+
+            ok_count   = sum(1 for r in results if r[0] == "ok")
+            skip_count = sum(1 for r in results if r[0] == "skip")
+            err_count  = sum(1 for r in results if r[0] == "error")
+
+            if ok_count:
+                st.success(f"✅ Created {ok_count} new portal account(s).")
+            if skip_count:
+                st.info(f"⏭️ Skipped {skip_count} row(s) — username already existed.")
+            if err_count:
+                st.error(f"❌ {err_count} row(s) failed — see details below.")
+
+            with st.container():
+                for status, ln, msg in results:
+                    icon = {"ok": "✅", "skip": "⏭️", "error": "❌"}[status]
+                    st.text(f"{icon} {ln}  — {msg}")
