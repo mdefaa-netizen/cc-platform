@@ -279,10 +279,26 @@ with tab_grant:
 
         if st.button("🚀 Create all rows", use_container_width=True,
                      key="bulk_grant_submit"):
-            # Build lookup tables once. Match keys are lowercase + stripped so
-            # "alice b fogel" matches "Alice B Fogel" without manual cleanup.
+            # Build lookup tables once. Match keys are lowercase, whitespace-
+            # stripped, AND stripped of a leading title so that input like
+            # "Cheryl Stromski" matches a stored name like "Rev. Cheryl
+            # Stromski" (and vice versa). Only the first token is removed if
+            # it is a recognised title; multi-token titles like "The Hon."
+            # are not handled. The same normaliser runs on BOTH sides
+            # (input and stored names), so adding a title to the list
+            # automatically benefits matching from either direction.
+            _NAME_TITLES = {
+                "rev.", "rev", "dr.", "dr", "mr.", "mr",
+                "mrs.", "mrs", "ms.", "ms", "prof.", "prof",
+                "fr.", "fr", "hon.", "hon",
+            }
+
             def _norm(s: str) -> str:
-                return (s or "").strip().lower()
+                s = (s or "").strip().lower()
+                parts = s.split(maxsplit=1)
+                if len(parts) == 2 and parts[0] in _NAME_TITLES:
+                    s = parts[1].strip()
+                return s
 
             existing_usernames = {
                 _norm(a.get("username", "")): a.get("username", "")
