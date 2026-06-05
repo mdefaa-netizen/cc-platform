@@ -12,6 +12,7 @@ from utils.database import (
 from html import escape as _esc
 from utils.auth import require_auth, render_sidebar_user
 from utils.styles import inject_css, page_header
+from utils.format_helpers import format_timestamp_short
 
 st.set_page_config(page_title="Messages · CC Platform", page_icon="💬", layout="wide")
 inject_css()
@@ -67,7 +68,7 @@ if _is_coord:
 
     def render_message(m, show_reply=True):
         icon     = CATEGORY_ICONS.get(m.get("category","General"), "💬")
-        ts       = str(m.get("created_at",""))[:16] if m.get("created_at") else ""
+        ts       = format_timestamp_short(m.get("created_at"))
         unread_b = "🔴 " if not m.get("is_read") else ""
         ev_name  = m.get("event_name","") or "—"
 
@@ -91,7 +92,7 @@ if _is_coord:
                 st.markdown("---")
                 st.markdown("**Your Reply:**")
                 st.success(m["reply_body"])
-                st.caption(f"Replied: {m.get('replied_at','')[:16] if m.get('replied_at') else ''}")
+                st.caption(f"Replied: {format_timestamp_short(m.get('replied_at'))}")
 
             if show_reply and not m.get("reply_body"):
                 st.markdown("---")
@@ -167,7 +168,7 @@ if _is_coord:
         else:
             st.caption(f"{len(fac_convs)} conversation(s)")
             for c in fac_convs:
-                ts = str(c.get("created_at",""))[:16] if c.get("created_at") else ""
+                ts = format_timestamp_short(c.get("created_at"))
                 ev = c.get("event_name","") or "—"
                 host_name = c.get("host_name","") or "Host"
                 with st.expander(
@@ -179,7 +180,7 @@ if _is_coord:
                     if not msgs:
                         st.caption("(no messages)")
                     for m in msgs:
-                        m_ts = str(m.get("created_at",""))[:16] if m.get("created_at") else ""
+                        m_ts = format_timestamp_short(m.get("created_at"))
                         who = m.get("sender_name","") or m.get("sender_type","")
                         st.markdown(
                             f"**{_esc(who)}** "
@@ -263,7 +264,7 @@ else:
             st.caption("No messages yet.")
         else:
             for m in my_msgs:
-                ts   = str(m.get("created_at",""))[:16] if m.get("created_at") else ""
+                ts   = format_timestamp_short(m.get("created_at"))
                 icon = CATEGORY_ICONS.get(m.get("category","General"), "💬")
                 with st.expander(f"{icon} {m.get('subject','')[:50]} · {ts}"):
                     st.markdown(f"**{m.get('body','')}**")
@@ -271,6 +272,6 @@ else:
                         st.markdown("---")
                         st.markdown("**Coordinator's Reply:**")
                         st.success(m["reply_body"])
-                        st.caption(f"Replied: {m.get('replied_at','')[:16] if m.get('replied_at') else ''}")
+                        st.caption(f"Replied: {format_timestamp_short(m.get('replied_at'))}")
                     else:
                         st.caption("⏳ Awaiting reply from Coordinator")

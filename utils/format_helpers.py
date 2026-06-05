@@ -73,25 +73,68 @@ def parse_date(value: Optional[Union[str, date, datetime]]) -> Optional[date]:
     return None
 
 
-def format_date_short(value: Optional[Union[str, date, datetime]]) -> str:
-    """Short date format for tight columns: 'Jun 27, 2026' instead of 'June 27, 2026'.
+def format_timestamp_short(value: Optional[Union[str, date, datetime]]) -> str:
+    """Format a timestamp for display as 'YYYY-MM-DD HH:MM'.
 
-    Same input handling as format_date(). Useful when column width is limited.
+    Backend-agnostic: psycopg2 (Postgres / Supabase) returns timestamps as
+    ``datetime`` objects, while sqlite3 returns them as strings. This helper
+    accepts either, so callers can safely render ``created_at`` / ``replied_at``
+    / ``logged_at`` / ``sent_date`` / ``generated_date`` columns without
+    crashing when the deployment backend changes.
+
+    Examples:
+        format_timestamp_short(datetime(2026, 6, 5, 14, 30))   -> "2026-06-05 14:30"
+        format_timestamp_short("2026-06-05 14:30:22.123456")   -> "2026-06-05 14:30"
+        format_timestamp_short(date(2026, 6, 5))               -> "2026-06-05"
+        format_timestamp_short(None)                           -> ""
+        format_timestamp_short("")                             -> ""
+
+    Returns "" for None/empty. Never raises on common DB return types.
     """
     if value is None or value == "":
         return ""
-
     if isinstance(value, datetime):
-        return value.strftime("%b %d, %Y")
+        return value.strftime("%Y-%m-%d %H:%M")
     if isinstance(value, date):
-        return value.strftime("%b %d, %Y")
-
+        return value.strftime("%Y-%m-%d")
     if isinstance(value, str):
-        try:
-            iso_part = value[:10]
-            parsed = date.fromisoformat(iso_part)
-            return parsed.strftime("%b %d, %Y")
-        except (ValueError, TypeError):
-            return value
+        # Historical SQLite format: "YYYY-MM-DD HH:MM:SS[.ffff]".
+        # Truncating to 16 chars yields "YYYY-MM-DD HH:MM".
+        return value[:16]
+    # Unknown type: stringify defensively and truncate.
+    return str(value)[:16]
 
-    return str(value)
+
+def format_date_short(value: Optional[Union[str, date, datetime]]) -> str:
+    """Format a date or timestamp for display as 'YYYY-MM-DD'.
+
+    Companion to ``format_timestamp_short`` for the date-only case. Backend-
+    agnostic: psycopg2 (Postgres / Supabase) returns timestamps as ``datetime``
+    objects, while sqlite3 returns them as strings. This helper accepts either,
+    so callers can safely render ``created_at`` / ``sent_date`` / ``submitted_date``
+    / ``calculated_at`` columns as a short date without crashing when the
+    deployment backend changes — a bare ``value[:10]`` raises ``TypeError`` on
+    a ``datetime`` object.
+
+    Examples:
+        format_date_short(datetime(2026, 6, 5, 14, 30))   -> "2026-06-05"
+        format_date_short(date(2026, 6, 5))               -> "2026-06-05"
+        format_date_short("2026-06-05 14:30:22.123456")   -> "2026-06-05"
+        format_date_short("2026-06-05")                   -> "2026-06-05"
+        format_date_short(None)                           -> ""
+        format_date_short("")                             -> ""
+
+    Returns "" for None/empty. Never raises on common DB return types.
+    """
+    if value is None or value == "":
+        return ""
+    if isinstance(value, datetime):
+        return value.strftime("%Y-%m-%d")
+    if isinstance(value, date):
+        return value.strftime("%Y-%m-%d")
+    if isinstance(value, str):
+        # Historical SQLite format: "YYYY-MM-DD[ HH:MM:SS[.ffff]]".
+        # Truncating to 10 chars yields "YYYY-MM-DD".
+        return value[:10]
+    # Unknown type: stringify defensively and truncate.
+    return str(value)[:10]

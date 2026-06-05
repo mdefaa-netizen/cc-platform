@@ -10,7 +10,7 @@ from utils.database import (
 from utils.report_utils import generate_excel, generate_pdf
 from utils.auth import require_auth, render_sidebar_user
 from utils.styles import inject_css, page_header
-from utils.format_helpers import format_date
+from utils.format_helpers import format_date, format_timestamp_short
 from datetime import datetime
 
 st.set_page_config(page_title="Reports · CC Platform", page_icon="📊", layout="wide")
@@ -160,7 +160,7 @@ with tab_hist:
     else:
         for r in reports:
             icon = "📊" if r.get("report_type")=="Excel" else "📄"
-            date_str = r.get("generated_date","")[:16] if r.get("generated_date") else ""
+            date_str = format_timestamp_short(r.get("generated_date"))
             st.markdown(f"""
             <div class="feed-item">
                 {icon} <strong>{r.get('report_name','')}</strong>

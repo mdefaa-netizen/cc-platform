@@ -6,7 +6,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from utils.database import log_activity, add_notification, get_all_events, get_all_feedback, add_feedback, get_event_feedback, init_db
 from utils.auth import require_auth, render_sidebar_user
 from utils.styles import inject_css, page_header
-from utils.format_helpers import format_date
+from utils.format_helpers import format_date, format_date_short
 
 st.set_page_config(page_title="Feedback · CC Platform", page_icon="📝", layout="wide")
 inject_css()
@@ -72,7 +72,7 @@ with tab_view:
         for fb in filtered:
             stars = "⭐" * (fb.get("rating") or 0)
             name  = fb.get("participant_name") or "Anonymous"
-            date  = str(fb.get("submitted_date",""))[:10] if fb.get("submitted_date") else "—"
+            date  = format_date_short(fb.get("submitted_date")) or "—"
             ev_name = fb.get("event_name","—")
             st.markdown(f"""
             <div class="section-box" style='margin-bottom:0.7rem;padding:0.9rem 1rem'>

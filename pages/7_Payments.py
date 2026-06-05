@@ -12,7 +12,7 @@ from utils.database import (
 )
 from utils.auth import require_auth, render_sidebar_user
 from utils.styles import inject_css, page_header
-from utils.format_helpers import format_date
+from utils.format_helpers import format_date, format_date_short
 from utils.mileage import (
     MILEAGE_RATE, FACILITATOR_STIPEND,
     get_maps_api_key as _get_maps_api_key,
@@ -592,7 +592,7 @@ with tab_mileage:
                     with mc3:
                         st.markdown(f"**Amount:** ${r['reimbursement_amount']:.2f}")
                         st.markdown(f"**Status:** {icon} {r['status']}")
-                        st.markdown(f"**Calculated:** {r['calculated_at'][:10]}")
+                        st.markdown(f"**Calculated:** {format_date_short(r['calculated_at'])}")
 
                     if r.get("notes"):
                         st.markdown(f"**Notes:** {r['notes']}")

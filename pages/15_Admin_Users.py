@@ -17,6 +17,7 @@ from utils.auth import (
 )
 from utils.styles import inject_css, page_header
 from utils.database import log_activity
+from utils.format_helpers import format_date_short
 
 st.set_page_config(page_title="Admin · Users · CC Platform", page_icon="👥", layout="wide")
 inject_css()
@@ -45,7 +46,7 @@ with tabs[0]:
             # who's claimed their account.
             if u.get("must_change_password"):
                 status = f"{status} · 🔓 not yet claimed"
-            created = str(u.get("created_at", ""))[:10]
+            created = format_date_short(u.get("created_at"))
             rows.append(
                 f"| {u['email']} | {u.get('full_name') or '—'} | "
                 f"{ROLE_LABELS.get(u['role'], u['role'])} | {status} | {created} |"

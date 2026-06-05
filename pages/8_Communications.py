@@ -12,7 +12,7 @@ from utils.email_utils import (send_email, template_confirmation,
                                 template_reminder, template_post_event)
 from utils.auth import require_auth, render_sidebar_user
 from utils.styles import inject_css, page_header
-from utils.format_helpers import format_date
+from utils.format_helpers import format_date, format_timestamp_short
 
 st.set_page_config(page_title="Communications · CC Platform", page_icon="📧", layout="wide")
 inject_css()
@@ -245,7 +245,7 @@ with tab_log:
     else:
         st.caption(f"Showing {len(filtered)} communication(s)")
         for c in filtered:
-            date_str = str(c.get("sent_date",""))[:16] if c.get("sent_date") else ""
+            date_str = format_timestamp_short(c.get("sent_date"))
             icon = {"Confirmation":"✅","Reminder":"🔔","Post-Event":"🙏","General":"💬"}.get(
                 c.get("communication_type",""),"📧")
             with st.expander(

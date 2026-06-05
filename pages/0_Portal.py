@@ -25,7 +25,7 @@ from utils.event_map import render_event_map
 from utils.auth import require_auth, render_sidebar_user
 from utils.styles import inject_css
 from html import escape as _esc
-from utils.format_helpers import format_date
+from utils.format_helpers import format_date, format_timestamp_short
 
 st.set_page_config(page_title="My Portal · Community Conversations",
                    page_icon="🗺️", layout="wide")
@@ -196,7 +196,7 @@ notifs      = get_notifications(portal_role, unread_only=True)
 if notifs:
     st.markdown(f"### 🔔 Updates for You ({len(notifs)})")
     for n in notifs:
-        ts = str(n.get("created_at",""))[:16] if n.get("created_at") else ""
+        ts = format_timestamp_short(n.get("created_at"))
         st.markdown(f"""
         <div style='background:#FEF9E7;border-left:4px solid #C8963E;padding:0.7rem 1rem;
         border-radius:0 8px 8px 0;margin-bottom:0.5rem;font-size:0.9rem'>
@@ -330,7 +330,7 @@ with tab_msg:
         st.caption("No messages yet.")
     else:
         for m in my_msgs:
-            ts   = str(m.get("created_at",""))[:16] if m.get("created_at") else ""
+            ts   = format_timestamp_short(m.get("created_at"))
             icon = {"General":"💬","Attendance":"📊","Payment":"💰","Delay":"⏰",
                     "Problem":"🚨","Information":"ℹ️","Feedback":"📝","Cancellation":"❌"}.get(
                     m.get("category","General"),"💬")
@@ -340,7 +340,7 @@ with tab_msg:
                     st.markdown("---")
                     st.markdown("**Coordinator's Reply:**")
                     st.success(m["reply_body"])
-                    st.caption(f"Replied: {m.get('replied_at','')[:16] if m.get('replied_at') else ''}")
+                    st.caption(f"Replied: {format_timestamp_short(m.get('replied_at'))}")
                 else:
                     st.caption("⏳ Awaiting reply from Coordinator")
                 # "🙈 Hide from my view" — self-only; the coordinator still
@@ -431,7 +431,7 @@ with tab_fac:
             st.caption("No conversations yet.")
         else:
             for c in host_convs:
-                ts = str(c.get("created_at",""))[:16] if c.get("created_at") else ""
+                ts = format_timestamp_short(c.get("created_at"))
                 ev = c.get("event_name","") or "—"
                 with st.expander(f"🤝 {c.get('subject','')[:60]} · {ev} · {ts}"):
                     visible = get_visible_participants(c["conversation_id"])
@@ -453,7 +453,7 @@ with tab_fac:
                     # this host are filtered out at the read path.
                     for m in get_conversation_messages(
                             c["conversation_id"], "host", person_id):
-                        m_ts = str(m.get("created_at",""))[:16] if m.get("created_at") else ""
+                        m_ts = format_timestamp_short(m.get("created_at"))
                         is_me = (m.get("sender_type") == "host" and str(m.get("sender_id")) == str(person_id))
                         align = "right" if is_me else "left"
                         bg = "#EAF6FF" if is_me else "#F3F4F6"
@@ -504,7 +504,7 @@ with tab_fac:
             st.caption("No messages from hosts yet.")
         else:
             for c in fac_convs:
-                ts = str(c.get("created_at",""))[:16] if c.get("created_at") else ""
+                ts = format_timestamp_short(c.get("created_at"))
                 ev = c.get("event_name","") or "—"
                 host_name = c.get("host_name","") or "Host"
                 with st.expander(f"📨 {c.get('subject','')[:60]} · {host_name} · {ev} · {ts}"):
@@ -528,7 +528,7 @@ with tab_fac:
 
                     for m in get_conversation_messages(
                             c["conversation_id"], "facilitator", person_id):
-                        m_ts = str(m.get("created_at",""))[:16] if m.get("created_at") else ""
+                        m_ts = format_timestamp_short(m.get("created_at"))
                         is_me = (m.get("sender_type") == "facilitator"
                                  and str(m.get("sender_id")) == str(person_id))
                         align = "right" if is_me else "left"

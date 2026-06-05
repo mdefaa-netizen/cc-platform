@@ -10,7 +10,7 @@ from utils.database import (
 )
 from utils.auth import require_auth, render_sidebar_user
 from utils.styles import inject_css, page_header
-from utils.format_helpers import format_date, parse_date
+from utils.format_helpers import format_date, format_date_short, parse_date
 
 st.set_page_config(page_title="Events · CC Platform", page_icon="📅", layout="wide")
 inject_css()
@@ -323,7 +323,7 @@ with tab_view:
             if _is_coord:
                 st.markdown(f"**Communications ({len(comms)})**")
                 for c in comms[:5]:
-                    date_str = str(c.get("sent_date",""))[:10] if c.get("sent_date") else ""
+                    date_str = format_date_short(c.get("sent_date"))
                     st.markdown(f"- {date_str} · {c.get('communication_type','')} · {c.get('subject','')[:40]}")
                 if not comms: st.caption("No communications logged.")
 

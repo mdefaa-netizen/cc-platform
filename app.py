@@ -16,6 +16,7 @@ except ImportError:
 from utils.styles import inject_css, page_header
 from utils.auth import require_auth, render_sidebar_user, ensure_bootstrap_coordinator
 from utils.supabase_db import _fetchall
+from utils.format_helpers import format_date_short, format_timestamp_short
 
 st.set_page_config(
     page_title="Community Conversations Coordinator",
@@ -106,7 +107,7 @@ notifs = get_notifications(role, unread_only=True)
 if notifs:
     st.markdown(f"### 🔔 Notifications ({len(notifs)} unread)")
     for n in notifs[:5]:
-        ts = str(n.get("created_at",""))[:16] if n.get("created_at") else ""
+        ts = format_timestamp_short(n.get("created_at"))
         st.markdown(f"""
         <div style='background:#FEF9E7;border-left:4px solid #C8963E;padding:0.7rem 1rem;
         border-radius:0 8px 8px 0;margin-bottom:0.5rem;font-size:0.88rem'>
@@ -236,7 +237,7 @@ if is_coordinator:
     inbox_msgs = get_all_messages(unread_only=True)[:5]
     if inbox_msgs:
         for m in inbox_msgs:
-            ts = str(m.get("created_at",""))[:16] if m.get("created_at") else ""
+            ts = format_timestamp_short(m.get("created_at"))
             st.markdown(f"""
             <div class="section-box" style='margin-bottom:0.5rem;padding:0.7rem 1rem'>
                 🔴 <strong>{_esc(m.get('sender_name','Unknown'))}</strong> ({_esc(m.get('sender_type','').title())})
@@ -262,7 +263,7 @@ with col_act:
     st.markdown("**Recent Platform Activity**")
     if activity:
         for a in activity:
-            ts   = str(a.get("logged_at",""))[:16] if a.get("logged_at") else ""
+            ts   = format_timestamp_short(a.get("logged_at"))
             user = a.get("user","Coordinator")
             icon = {"Event":"📅","Payment":"💰","Communication":"📧","Task":"✅",
                     "Host":"👥","Facilitator":"🎤","Feedback":"📝"}.get(
@@ -280,7 +281,7 @@ with col_comm:
     st.markdown("**Recent Communications**")
     if comms:
         for c in comms:
-            date_str = str(c.get("sent_date",""))[:10] if c.get("sent_date") else ""
+            date_str = format_date_short(c.get("sent_date"))
             st.markdown(f"""
             <div class="feed-item">
                 📧 <strong>{_esc(c.get('subject','')[:45])}</strong>
