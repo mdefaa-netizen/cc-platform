@@ -225,46 +225,50 @@ with main_left:
 
     # Real-time Activity Feed
     st.markdown("<br>", unsafe_allow_html=True)
-    st.markdown("### 📡 Real-Time Activity Feed")
-    st.caption("All actions across the platform — visible to Coordinator, NHH, and CDFA")
+    with st.expander("🛰️ Real-Time Activity Feed", expanded=False):
+        st.caption("All actions across the platform — visible to Coordinator, NHH, and CDFA")
 
-    activity = get_activity_log(20)
-    comms    = get_all_communications()[:5]
+        activity = get_activity_log(20)
+        comms    = get_all_communications()[:5]
 
-    col_act, col_comm = st.columns(2)
+        col_act, col_comm = st.columns(2)
 
-    with col_act:
-        st.markdown("**Recent Platform Activity**")
-        if activity:
-            for a in activity:
-                ts   = format_timestamp_short(a.get("logged_at"))
-                user = a.get("user","Coordinator")
-                icon = {"Event":"📅","Payment":"💰","Communication":"📧","Task":"✅",
-                        "Host":"👥","Facilitator":"🎤","Feedback":"📝"}.get(
-                        a.get("action","").split()[0] if a.get("action") else "","🔹")
-                st.markdown(f"""
-                <div class="feed-item">
-                    {icon} <strong>{_esc(a.get('action',''))}</strong>
-                    <div class="feed-date">{_esc(ts)} · by {_esc(user)}</div>
-                    <div style='font-size:0.8rem;color:#555'>{_esc(a.get('details',''))}</div>
-                </div>""", unsafe_allow_html=True)
-        else:
-            st.caption("No activity logged yet. Actions will appear here in real time.")
+        with col_act:
+            st.markdown("**Recent Platform Activity**")
+            if activity:
+                for a in activity:
+                    ts   = format_timestamp_short(a.get("logged_at"))
+                    user = a.get("user","Coordinator")
+                    icon = {"Event":"📅","Payment":"💰","Communication":"📧","Task":"✅",
+                            "Host":"👥","Facilitator":"🎤","Feedback":"📝"}.get(
+                            a.get("action","").split()[0] if a.get("action") else "","🔹")
+                    st.markdown(f"""
+                    <div class="feed-item">
+                        {icon} <strong>{_esc(a.get('action',''))}</strong>
+                        <div class="feed-date">{_esc(ts)} · by {_esc(user)}</div>
+                        <div style='font-size:0.8rem;color:#555'>{_esc(a.get('details',''))}</div>
+                    </div>""", unsafe_allow_html=True)
+            else:
+                st.caption("No activity logged yet. Actions will appear here in real time.")
 
-    with col_comm:
-        st.markdown("**Recent Communications**")
-        if comms:
-            for c in comms:
-                date_str = format_date_short(c.get("sent_date"))
-                st.markdown(f"""
-                <div class="feed-item">
-                    📧 <strong>{_esc(c.get('subject','')[:45])}</strong>
-                    <div class="feed-date">{_esc(date_str)} · {_esc(c.get('recipient_type',''))} · {_esc(c.get('communication_type',''))}</div>
-                </div>""", unsafe_allow_html=True)
-        else:
-            st.caption("No communications logged yet.")
+        with col_comm:
+            st.markdown("**Recent Communications**")
+            if comms:
+                for c in comms:
+                    date_str = format_date_short(c.get("sent_date"))
+                    st.markdown(f"""
+                    <div class="feed-item">
+                        📧 <strong>{_esc(c.get('subject','')[:45])}</strong>
+                        <div class="feed-date">{_esc(date_str)} · {_esc(c.get('recipient_type',''))} · {_esc(c.get('communication_type',''))}</div>
+                    </div>""", unsafe_allow_html=True)
+            else:
+                st.caption("No communications logged yet.")
 
 with main_right:
+    # Top spacing so the map's top aligns with the gold divider under
+    # "🏠 Dashboard" (≈ the KPI-cards row), not the very top of the page.
+    st.markdown("<div style='height:80px'></div>", unsafe_allow_html=True)
+
     # ── Event Map ──────────────────────────────────────────────────────────────────
     # Rendering lives in utils.event_map so the host/facilitator portal can render
     # the same map without duplicating folium+geopy logic. The two SQL fetches that
@@ -292,6 +296,6 @@ with main_right:
         for _fr in _fac_rows:
             _facs_by_event.setdefault(_fr["event_id"], []).append(_fr["facilitator_name"])
 
-        _render_event_map(_map_rows, _facs_by_event, height=900)
+        _render_event_map(_map_rows, _facs_by_event, height=560)
     except Exception as _map_err:
         st.warning(f"🗺️ Map could not be rendered: {_map_err}")
