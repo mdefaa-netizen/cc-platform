@@ -66,7 +66,12 @@ if _is_coord:
          "🤝 Host ↔ Facilitator (read-only)"]
     )
 
-    def render_message(m, show_reply=True):
+    def render_message(m, show_reply=True, scope="inbox"):
+        # `scope` namespaces the per-message widget keys. st.tabs renders the
+        # body of EVERY tab on each run, so an unread message drawn in both the
+        # Unread tab and the All Messages tab would otherwise build identical
+        # keys twice → StreamlitDuplicateElementKey. message_id alone is not
+        # unique across renders; (scope, message_id) is.
         icon     = CATEGORY_ICONS.get(m.get("category","General"), "💬")
         ts       = format_timestamp_short(m.get("created_at"))
         unread_b = "🔴 " if not m.get("is_read") else ""
@@ -83,7 +88,7 @@ if _is_coord:
                 st.info(m.get("body",""))
             with c2:
                 if not m.get("is_read"):
-                    if st.button("✅ Mark Read", key=f"read_{m['message_id']}",
+                    if st.button("✅ Mark Read", key=f"read_{scope}_{m['message_id']}",
                                  use_container_width=True):
                         mark_message_read(m["message_id"])
                         st.rerun()
@@ -96,9 +101,9 @@ if _is_coord:
 
             if show_reply and not m.get("reply_body"):
                 st.markdown("---")
-                reply = st.text_area("Reply to this message", key=f"reply_txt_{m['message_id']}",
+                reply = st.text_area("Reply to this message", key=f"reply_txt_{scope}_{m['message_id']}",
                                       placeholder="Type your reply here...", height=80)
-                if st.button("📤 Send Reply", key=f"send_reply_{m['message_id']}",
+                if st.button("📤 Send Reply", key=f"send_reply_{scope}_{m['message_id']}",
                              use_container_width=True):
                     if reply.strip():
                         reply_to_message(m["message_id"], reply.strip())
@@ -115,11 +120,11 @@ if _is_coord:
             # accidental clicks.
             if _is_coord:
                 st.markdown("---")
-                confirm_key = f"del_confirm_{m['message_id']}"
+                confirm_key = f"del_confirm_{scope}_{m['message_id']}"
                 if st.checkbox("⚠️ Confirm permanent delete",
                                 key=confirm_key):
                     if st.button("🗑️ Delete permanently",
-                                 key=f"del_btn_{m['message_id']}",
+                                 key=f"del_btn_{scope}_{m['message_id']}",
                                  use_container_width=True,
                                  type="primary"):
                         delete_message(
@@ -135,7 +140,7 @@ if _is_coord:
             st.success("📭 No unread messages. All caught up!")
         else:
             for m in unread:
-                render_message(m)
+                render_message(m, scope="inbox")
 
     with tab_all:
         cat_filter = st.selectbox("Filter by category",
@@ -148,7 +153,7 @@ if _is_coord:
         else:
             st.caption(f"{len(filtered)} message(s)")
             for m in filtered:
-                render_message(m)
+                render_message(m, scope="all")
 
     # Coordinator oversight of host↔facilitator threads. Coordinator is a
     # silent participant on each thread (is_hidden=1) and does NOT post here —
