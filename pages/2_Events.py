@@ -47,6 +47,41 @@ tab_add  = tabs[1] if _is_coord else None
 tab_edit = tabs[2] if _is_coord else None
 tab_view = tabs[3] if _is_coord else tabs[1]
 
+def _fmt_time(value):
+    """Render event_time as a 12-hour clock time (e.g. '6:00 PM').
+
+    No shared format_time() helper exists in utils, so format inline here.
+    Tolerant of every form event_time takes: 'HH:MM:SS' / 'HH:MM' strings
+    (str(time_input) on add), free text (edit form), time/datetime objects,
+    and null/empty. Renders '—' for null/empty to match the table's other
+    empty cells; returns unrecognized strings unchanged (fail-safe).
+    """
+    if value is None or value == "":
+        return "—"
+    t = None
+    if isinstance(value, datetime.datetime):
+        t = value.time()
+    elif isinstance(value, datetime.time):
+        t = value
+    elif isinstance(value, str):
+        s = value.strip()
+        if not s:
+            return "—"
+        for fmt in ("%H:%M:%S", "%H:%M", "%I:%M %p", "%I:%M%p"):
+            try:
+                t = datetime.datetime.strptime(s, fmt).time()
+                break
+            except ValueError:
+                continue
+        if t is None:
+            return s  # unrecognized — pass through rather than crash
+    else:
+        return str(value)
+    hour12 = t.hour % 12 or 12
+    ampm = "AM" if t.hour < 12 else "PM"
+    return f"{hour12}:{t.minute:02d} {ampm}"
+
+
 # ── All Events ─────────────────────────────────────────────────────────────────
 with tab_list:
     events = get_all_events()
@@ -77,13 +112,13 @@ with tab_list:
     if not filtered:
         st.info("No events found.")
     else:
-        header  = "| Event Name | Date | City | Host | Facilitators | Status | Attendance |"
-        divider = "|---|---|---|---|---|---|---|"
+        header  = "| Event Name | Date | Time | City | Host | Facilitators | Status | Attendance |"
+        divider = "|---|---|---|---|---|---|---|---|"
         rows = [header, divider]
         for e in filtered:
             badge = {"Scheduled":"🔵","Completed":"🟢","Cancelled":"🔴"}.get(e.get("status",""),"⚪")
             att   = str(e.get("attendance_count") or "—")
-            rows.append(f"| {e['event_name']} | {format_date(e['event_date'])} | {e.get('city','')} | "
+            rows.append(f"| {e['event_name']} | {format_date(e['event_date'])} | {_fmt_time(e.get('event_time'))} | {e.get('city','')} | "
                         f"{e.get('host_name','—')} | {e.get('facilitator_names','—')} | "
                         f"{badge} {e.get('status','')} | {att} |")
         st.markdown("\n".join(rows))
