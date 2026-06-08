@@ -148,7 +148,7 @@ def _get_pool():
                 flush=True,
             )
         try:
-            _pool = psycopg2.pool.SimpleConnectionPool(
+            _pool = psycopg2.pool.ThreadedConnectionPool(
                 minconn=1, maxconn=10,
                 host=hostname,
                 port=port,
@@ -223,6 +223,13 @@ def _fetchall(conn, query, params=None):
             rows = cur.fetchall()
         return [dict(r) for r in rows]
     finally:
+        # End the implicit read transaction so the connection never returns to
+        # the (shared) pool "idle in transaction" — a stale open transaction on
+        # a reused connection can swallow a later INSERT's commit.
+        try:
+            conn.rollback()
+        except Exception:
+            pass
         _putconn(conn)
 
 
@@ -234,6 +241,13 @@ def _fetchone(conn, query, params=None):
             row = cur.fetchone()
         return dict(row) if row else None
     finally:
+        # End the implicit read transaction so the connection never returns to
+        # the (shared) pool "idle in transaction" — a stale open transaction on
+        # a reused connection can swallow a later INSERT's commit.
+        try:
+            conn.rollback()
+        except Exception:
+            pass
         _putconn(conn)
 
 
